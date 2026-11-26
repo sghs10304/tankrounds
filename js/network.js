@@ -255,6 +255,7 @@ const Net = {
         RNG.setSeed(msg.seed);
         G.round = msg.round;
         G.nextFirst = msg.nextFirst;
+        if (msg.biome) setBiome(msg.biome);
         Terrain.top.set(msg.terrainTop);
         Terrain.rebuild();
         players[0].x = msg.p0x;
@@ -264,8 +265,9 @@ const Net = {
         G.portals = msg.portals;
         Sfx.roundStart();
         beginTurn(msg.turn, msg.wind, msg.seed);
-        const sub = G.round === 1 ? '⚡ 초고속 1R (체력 50)' : G.round === 2 ? '⚡ 스피드 2R (체력 90)' : G.round === 3 ? '⚡ 3R (체력 120)' : `${players[G.turn].name} 선공`;
-        showBanner(`ROUND ${G.round}`, sub, '#ffffff', 2.0);
+        const b = BIOME_DEFS[G.biome];
+        const sub = G.round === 1 ? `⚡ 초고속 1R (체력 50) · ${b.icon} ${b.name}` : G.round === 2 ? `⚡ 스피드 2R (체력 90) · ${b.icon} ${b.name}` : G.round === 3 ? `⚡ 3R (체력 120) · ${b.icon} ${b.name}` : `${b.icon} ${b.name} · ${players[G.turn].name} 선공`;
+        showBanner(`ROUND ${G.round}`, sub, '#ffffff', 2.2);
         break;
       }
       case 'turnStart': {
