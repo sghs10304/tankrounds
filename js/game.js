@@ -25,6 +25,7 @@ const players = [makePlayer(0), makePlayer(1)];
 const G = {
   state: 'title', stateT: 0, time: 0, timeScale: 1,
   round: 0, turn: 0, nextFirst: 0, wind: 0,
+  biome: 'grass', disaster: null,
   shells: [], pending: [], particles: [], rings: [], floaters: [], flashes: [], fields: [], streaks: [],
   poisons: [], crates: [], portals: [], mines: [], lightnings: [],
   events: [], // 확장용 자연재해/특수 이벤트 플러그인 배열
@@ -33,6 +34,12 @@ const G = {
 };
 
 function setState(s) { G.state = s; G.stateT = 0; }
+
+function setBiome(key) {
+  G.biome = BIOME_DEFS[key] ? key : 'grass';
+  Terrain.setBiome(G.biome);
+  BG = makeBackground(G.biome);
+}
 
 function syncAuthoritativeState(msg) {
   players[0].hp = msg.hp0;
@@ -86,6 +93,9 @@ function resetPlayersForRound() {
 }
 
 function setupField() {
+  const biomeKeys = Object.keys(BIOME_DEFS);
+  const pickedBiome = biomeKeys[(RNG.next() * biomeKeys.length) | 0];
+  setBiome(pickedBiome);
   const x1 = Math.round(rand(150, 300)), x2 = Math.round(W - rand(150, 300));
   Terrain.generate(x1, x2);
   players[0].x = x1; players[1].x = x2;
@@ -102,7 +112,7 @@ function startMatch() {
 }
 
 function startRound() {
-  G.round++; G.wind = 0;
+  G.round++; G.wind = 0; G.disaster = null;
   if (Net.active && !Net.isHost) return;
   const seed = (Date.now() ^ ((Math.random() * 0xFFFFFFFF) >>> 0)) >>> 0;
   RNG.setSeed(seed);
@@ -113,6 +123,7 @@ function startRound() {
     Net.send({
       type: 'roundSetup',
       seed,
+      biome: G.biome,
       round: G.round,
       nextFirst: G.nextFirst,
       turn: G.nextFirst,
@@ -125,8 +136,49 @@ function startRound() {
     }, 1);
   }
   beginTurn(G.nextFirst, wind, seed);
-  const sub = G.round === 1 ? '⚡ 초고속 1R (체력 50)' : G.round === 2 ? '⚡ 스피드 2R (체력 90)' : G.round === 3 ? '⚡ 3R (체력 120)' : `${players[G.nextFirst].name} 선공`;
-  showBanner(`ROUND ${G.round}`, sub, '#ffffff', 2.0);
+  const b = BIOME_DEFS[G.biome];
+  const sub = G.round === 1 ? `⚡ 초고속 1R (체력 50) · ${b.icon} ${b.name}` : G.round === 2 ? `⚡ 스피드 2R (체력 90) · ${b.icon} ${b.name}` : G.round === 3 ? `⚡ 3R (체력 120) · ${b.icon} ${b.name}` : `${b.icon} ${b.name} · ${players[G.nextFirst].name} 선공`;
+  showBanner(`ROUND ${G.round}`, sub, '#ffffff', 2.2);
+}
+
+function triggerDisaster() {
+  G.disaster = null;
+  const roll = RNG.next();
+  if (roll < 0.16) {
+    // 1) 태풍: 초강풍 발생 + 양쪽 탱크 바람 방향으로 밀림
+    const dir = RNG.next() < 0.5 ? -1 : 1;
+    G.wind = dir * Math.round(rand(8.5, 10) * 10) / 10;
+    G.disaster = { type: 'typhoon', name: '🌪️ 초강력 태풍 경보!', dir };
+    for (const pl of players) {
+      if (pl.alive) {
+        pl.vx += dir * 240;
+        pl.air = true;
+        pl.vy = -120;
+      }
+    }
+    Sfx.airstrike();
+    G.shake = Math.max(G.shake, 14);
+    G.floaters.push({ x: W / 2, y: 200, text: `🌪️ 태풍 발생! 강풍 ${dir > 0 ? '▶' : '◀'} ${Math.abs(G.wind)}`, color: '#80deea', t: 0, life: 2.0 });
+  } else if (roll < 0.30) {
+    // 2) 지진: 맵 곳곳 지형 함몰 + 화면 진동 + 탱크 공중 도약
+    G.disaster = { type: 'earthquake', name: '🌋 대지진 경보!' };
+    for (let k = 0; k < 5; k++) {
+      const qx = rand(180, W - 180);
+      const qy = Terrain.h(qx) + rand(10, 45);
+      Terrain.carve(qx, qy, rand(38, 68));
+      burst(qx, qy - 10, 10, { colors: getDirtColors(), speed: 220, life: 0.8, size: 4, ground: true, kind: 'debris' });
+    }
+    for (const pl of players) {
+      if (pl.alive) {
+        pl.air = true;
+        pl.vy = -rand(180, 260);
+        pl.vx += rand(-90, 90);
+      }
+    }
+    Sfx.explosion(90);
+    G.shake = Math.max(G.shake, 24);
+    G.floaters.push({ x: W / 2, y: 200, text: '🌋 대지진 발생! 지반이 무너집니다!', color: '#ff8a65', t: 0, life: 2.0 });
+  }
 }
 
 function beginTurn(i, forcedWind = null, forcedSeed = null) {
@@ -143,6 +195,9 @@ function beginTurn(i, forcedWind = null, forcedSeed = null) {
     p.fuel = p.stats.maxFuel;
   }
   p.charging = false; p.charge = 0; p.chargeT = 0;
+
+  // 자연재해 판정 (태풍 / 지진)
+  triggerDisaster();
 
   // 맹독 지대 처리
   for (let idx = G.poisons.length - 1; idx >= 0; idx--) {
@@ -174,7 +229,7 @@ function beginTurn(i, forcedWind = null, forcedSeed = null) {
 function showBanner(text, sub, color, dur = 1.7) { G.banner = { text, sub, color, t: 0, dur }; }
 
 /* ============================ 파티클 / 이펙트 ============================ */
-const DIRT_COLORS = ['#8a6038', '#5a3b21', '#6fcf4f', '#a67c4e'];
+const getDirtColors = () => (BIOME_DEFS[G.biome] || BIOME_DEFS.grass).debris;
 const FIRE_COLORS = ['#ffd54f', '#ff9800', '#ff5722', '#ffffff'];
 
 function addParticle(o) {
@@ -200,12 +255,12 @@ function blastFX(x, y, radius, raise) {
   G.screenFlash = Math.max(G.screenFlash, clamp(radius / 160, 0.12, 0.42));
   burst(x, y, 10, { colors: FIRE_COLORS, speed: 300, life: 0.45, size: 4, grav: 0.3 });
   burst(x, y, 10 + radius * 0.25, { colors: ['#ffe082', '#ffb300', '#ff7043', '#ffffff'], speed: 330 + radius * 5, life: 0.9, size: 2.4, grav: 1, ground: true, kind: 'spark' });
-  burst(x, y, 10 + radius * 0.3, { colors: DIRT_COLORS, speed: 260 + radius * 3, life: 1.0, size: 3.6, grav: 1, ground: true, spread: 2.8, kind: 'debris' });
+  burst(x, y, 10 + radius * 0.3, { colors: getDirtColors(), speed: 260 + radius * 3, life: 1.0, size: 3.6, grav: 1, ground: true, spread: 2.8, kind: 'debris' });
   for (let i = 0; i < 5 + radius / 10; i++)
     P(x + fxRand(-radius, radius) * 0.5, y + fxRand(-radius, radius) * 0.3, fxRand(-100, 100), fxRand(-140, -20),
       { life: fxRand(1.1, 1.7), size: fxRand(10, 18), grow: fxRand(16, 26), color: Math.random() < 0.5 ? '#8b6b4a' : '#6e5238', grav: -0.05, drag: 1.4, kind: 'dust' });
   G.shake = Math.max(G.shake, 7 + radius * 0.3);
-  if (raise) burst(x, y, 14, { colors: DIRT_COLORS, speed: 340, life: 0.9, size: 4, grav: 1, ground: true, spread: 1.4, kind: 'debris' });
+  if (raise) burst(x, y, 14, { colors: getDirtColors(), speed: 340, life: 0.9, size: 4, grav: 1, ground: true, spread: 1.4, kind: 'debris' });
 }
 function updateParticles(dt) {
   const ps = G.particles;
@@ -272,7 +327,7 @@ function updateTank(p, dt) {
     if (p.y >= g2 && p.vy >= 0) {
       if (p.vy > 240) {
         Sfx.thud(); G.shake = Math.max(G.shake, 5 + Math.min(10, p.vy / 80));
-        burst(p.x, g2, 10, { colors: DIRT_COLORS, speed: 170, life: 0.7, size: 3, spread: 2, ground: true, kind: 'debris' });
+        burst(p.x, g2, 10, { colors: getDirtColors(), speed: 170, life: 0.7, size: 3, spread: 2, ground: true, kind: 'debris' });
       }
       p.y = g2; p.vy = 0; p.air = false; p.vx *= 0.35;
     }
@@ -281,7 +336,9 @@ function updateTank(p, dt) {
     else {
       if (p.y > g.y + 0.6) p.y = Math.max(g.y, p.y - 450 * dt);
       else p.y = g.y;
-      p.vx *= Math.exp(-12 * dt); if (Math.abs(p.vx) < 4) p.vx = 0;
+      const biome = BIOME_DEFS[G.biome] || BIOME_DEFS.grass;
+      const friction = biome.slide ? 2.4 : 12;
+      p.vx *= Math.exp(-friction * dt); if (Math.abs(p.vx) < 4) p.vx = 0;
       if (p.vx) { if (moveTankX(p, p.vx * dt) === 0) p.vx = 0; }
     }
   }
@@ -356,10 +413,22 @@ function fire(p, fromRemote = false) {
   }
 
   const a = aimRad(p), st = p.stats;
-  const totalShots = st.shots + p.bonusShots;
-  for (let i = 0; i < totalShots; i++) {
-    const spread = st.buckshot > 0 ? rand(-5.5, 5.5) : (i > 0 ? rand(-1.0, 1.0) : 0);
-    G.pending.push({ t: i * st.shotDelay, owner: p, angle: a + spread * Math.PI / 180, power: pp });
+  const eventRoll = RNG.next();
+
+  if (eventRoll < 0.03) {
+    // [특수 이벤트 1] 3% 확률: 돌발 전술 핵폭탄 (맵 초토화 + 양측 자폭 무승부)
+    G.pending.push({ t: 0, owner: p, angle: a, power: pp, isDrawNuke: true });
+    showBanner('☢️ 핵폭탄 경보!', '3% 확률 돌발 핵탄두 장전! 전원 대피!', '#c6ff00', 1.8);
+  } else if (eventRoll < 0.10) {
+    // [특수 이벤트 2] 7% 확률: 불발탄 (자기 기체에서 포탄 즉시 폭발)
+    G.pending.push({ t: 0, owner: p, angle: a, power: pp, isMisfire: true });
+    showBanner('💥 불발탄 발생!', '7% 확률 포신 내부 점화!', '#ff5252', 1.5);
+  } else {
+    const totalShots = st.shots + p.bonusShots;
+    for (let i = 0; i < totalShots; i++) {
+      const spread = st.buckshot > 0 ? rand(-5.5, 5.5) : (i > 0 ? rand(-1.0, 1.0) : 0);
+      G.pending.push({ t: i * st.shotDelay, owner: p, angle: a + spread * Math.PI / 180, power: pp });
+    }
   }
   p.dmgBoost = 1;
   p.radiusBoost = 1;
@@ -367,15 +436,25 @@ function fire(p, fromRemote = false) {
   G.resolveT = 0; G.settleT = 0;
   setState('resolving');
 }
-function spawnShell(owner, angle, power) {
+function spawnShell(owner, angle, power, opts = {}) {
   const st = owner.stats, m = muzzlePos(owner, angle);
+  if (opts.isMisfire) {
+    // 불발탄: 발사 즉시 자기 탱크 위치에서 폭발
+    Sfx.pop();
+    G.floaters.push({ x: owner.x, y: owner.y - 68, text: '💥 불발탄 자폭!', color: '#ff5252', t: 0, life: 1.4 });
+    explode({ x: owner.x, y: owner.y - 16 * st.tankScale, radius: st.blastRadius * 1.15, damage: Math.max(24, st.damage * 0.9) }, owner);
+    return;
+  }
   const sp = power / 100 * MAX_SHELL_SPEED * st.shellSpeed;
-  const shell = makeShell(owner, m.x, m.y, Math.cos(angle) * sp, -Math.sin(angle) * sp, { angle });
-  runHooks(owner, 'onFire', shell);
+  const extra = opts.isDrawNuke ? {
+    r: 12, radius: 520, damage: 9999, isDrawNuke: true, isLava: true
+  } : {};
+  const shell = makeShell(owner, m.x, m.y, Math.cos(angle) * sp, -Math.sin(angle) * sp, Object.assign({ angle }, extra));
+  if (!opts.isDrawNuke) runHooks(owner, 'onFire', shell);
   G.shells.push(shell);
   owner.recoil = 1;
   Sfx.shoot(power);
-  G.shake = Math.max(G.shake, 4);
+  G.shake = Math.max(G.shake, opts.isDrawNuke ? 16 : 4);
   burst(m.x, m.y, 8, { colors: FIRE_COLORS, speed: 240, life: 0.3, size: 3, grav: 0.2, spread: 0.9, dir: -angle, kind: 'spark' });
 }
 function collectCrate(cr, idx, owner) {
@@ -511,7 +590,7 @@ function stepDrill(s, dt) {
     if (s.drillAcc >= 5) {
       s.drillAcc = 0;
       Terrain.carve(s.x, s.y, s.drillR);
-      P(s.x, s.y, fxRand(-60, 60), fxRand(-60, 20), { life: 0.5, size: 3, color: DIRT_COLORS[(Math.random() * 4) | 0], kind: 'debris', ground: true });
+      P(s.x, s.y, fxRand(-60, 60), fxRand(-60, 20), { life: 0.5, size: 3, color: getDirtColors()[(Math.random() * 4) | 0], kind: 'debris', ground: true });
     }
     const lx = s.x + s.dx * (s.drillR + 3), ly = s.y + s.dy * (s.drillR + 3);
     if (!Terrain.solid(lx, ly)) {
@@ -524,6 +603,23 @@ function stepDrill(s, dt) {
 }
 function detonate(s, hit) {
   const owner = s.owner;
+  if (s.isDrawNuke) {
+    // 3% 돌발 핵폭탄 착탄: 맵 전체 초토화 후 양 플레이어 동시 사망 -> 무승부 처리
+    Terrain.carve(s.x, s.y, 520);
+    blastFX(s.x, s.y, 260, false);
+    G.screenFlash = 1.0;
+    G.shake = 42;
+    Sfx.ko();
+    for (const pl of players) {
+      if (pl.alive) {
+        pl.phoenixCharges = 0;
+        pl.hp = 0;
+        killTank(pl);
+      }
+    }
+    showBanner('☢️ 핵폭발 무승부!', '전장이 초토화되어 이번 라운드는 무효 처리됩니다', '#c6ff00', 2.4);
+    return;
+  }
   const c = { x: s.x, y: s.y, shell: s, radius: s.radius, damage: s.damage, raise: false, noCarve: false, raiseRadius: 0, hit };
   runHooks(owner, 'onDetonate', c, owner);
   explode(c, owner);
@@ -831,8 +927,11 @@ function updateActivePlayer(dt) {
   if (up || dn) p.angle = clamp(p.angle + (up - dn) * p.aimDir * AIM_SPEED * dt, 0, 180);
   const dir = (ctrl.right ? 1 : 0) - (ctrl.left ? 1 : 0);
   if (dir && p.fuel > 0 && !p.air) {
-    const want = Math.min(MOVE_SPEED * dt, p.fuel);
-    p.fuel -= moveTankX(p, dir * want);
+    const biome = BIOME_DEFS[G.biome] || BIOME_DEFS.grass;
+    const want = Math.min(MOVE_SPEED * biome.speedMult * dt, p.fuel);
+    const moved = moveTankX(p, dir * want);
+    p.fuel = Math.max(0, p.fuel - moved * biome.fuelMult);
+    if (biome.slide && moved > 0) p.vx = dir * MOVE_SPEED * biome.speedMult;
   }
   if (p.charging) { p.chargeT += dt; p.charge = pingpong(p.chargeT); Sfx.chargeUpdate(p.charge); }
 
@@ -891,9 +990,14 @@ function finishResolve() {
 
 function endRound() {
   const [a, b] = players;
-  let loser;
-  if (a.hp <= 0 && b.hp <= 0) loser = a.hp < b.hp ? 0 : b.hp < a.hp ? 1 : G.turn;
-  else loser = a.hp <= 0 ? 0 : 1;
+  if (a.hp <= 0 && b.hp <= 0) {
+    // 핵폭탄 등으로 양쪽 모두 사망 시 무승부 처리 (점수 변동 없음, 다음 라운드 재시작)
+    G.winner = -1;
+    showBanner('⚖️ ROUND DRAW!', `무승부! 현재 스코어 ${players[0].score} : ${players[1].score}`, '#c6ff00', 2.2);
+    setState('roundEnd');
+    return;
+  }
+  const loser = a.hp <= 0 ? 0 : 1;
   const winner = 1 - loser;
   players[winner].score++;
   G.nextFirst = loser;
@@ -953,7 +1057,7 @@ function update(raw) {
             const cb = q.chainBoom;
             explode({ x: cb.x, y: Terrain.h(cb.x), radius: cb.radius, damage: cb.damage }, q.owner);
           } else if (q.owner.alive) {
-            spawnShell(q.owner, q.angle, q.power);
+            spawnShell(q.owner, q.angle, q.power, { isDrawNuke: q.isDrawNuke, isMisfire: q.isMisfire });
           }
         }
       }
@@ -966,7 +1070,9 @@ function update(raw) {
     }
     case 'roundEnd':
       if (G.stateT > 2.5) {
-        if (players[G.winner].score >= WINS_TO_MATCH) setState('matchOver'); else openCards();
+        if (G.winner === -1) startRound();
+        else if (players[G.winner].score >= WINS_TO_MATCH) setState('matchOver');
+        else openCards();
       }
       break;
     case 'cardPicked':
@@ -976,11 +1082,12 @@ function update(raw) {
 }
 
 /* ============================ 렌더링 ============================ */
-function makeBackground() {
+function makeBackground(biomeKey = 'grass') {
+  const b = BIOME_DEFS[biomeKey] || BIOME_DEFS.grass;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d');
   const g = x.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, '#070b24'); g.addColorStop(0.35, '#1d1f4a'); g.addColorStop(0.7, '#5a3466'); g.addColorStop(1, '#c4627a');
+  g.addColorStop(0, b.sky[0]); g.addColorStop(0.35, b.sky[1]); g.addColorStop(0.7, b.sky[2]); g.addColorStop(1, b.sky[3]);
   x.fillStyle = g; x.fillRect(0, 0, W, H);
   for (let i = 0; i < 200; i++) { x.fillStyle = `rgba(255,255,255,${fxRand(0.2, 0.9)})`; x.fillRect(fxRand(0, W), fxRand(0, H * 0.55), fxRand(1, 2.2), fxRand(1, 2.2)); }
   const mg = x.createRadialGradient(1300, 190, 4, 1300, 190, 70);
@@ -992,7 +1099,7 @@ function makeBackground() {
     for (let i = 0; i <= W; i += 8) x.lineTo(i, base + amp * Math.sin(i / 150 + ph) + amp * 0.5 * Math.sin(i / 53 + ph * 2));
     x.lineTo(W, H); x.closePath(); x.fill();
   };
-  layer(H * 0.6, 46, '#2d2150'); layer(H * 0.68, 34, '#221a40');
+  layer(H * 0.6, 46, b.mtn[0]); layer(H * 0.68, 34, b.mtn[1]);
   return c;
 }
 let BG = null;
@@ -1354,9 +1461,10 @@ function drawHUD() {
     if (!p.cards.length) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.textAlign = 'left'; ctx.fillText('카드 없음', x0, 99); }
   });
   const cx = W / 2;
+  const bInfo = BIOME_DEFS[G.biome] || BIOME_DEFS.grass;
   ctx.textAlign = 'center'; ctx.font = `bold 14px ${FONT}`; ctx.fillStyle = '#aab';
-  ctx.fillText(`ROUND ${G.round}${Net.active ? ' · ONLINE' : ''}`, cx, 22);
-  ctx.font = `11px ${FONT}`; ctx.fillStyle = '#889'; ctx.fillText('WIND', cx, 42);
+  ctx.fillText(`ROUND ${G.round} · ${bInfo.icon} ${bInfo.name}${Net.active ? ' · ONLINE' : ''}`, cx, 22);
+  ctx.font = `11px ${FONT}`; ctx.fillStyle = '#889'; ctx.fillText(G.disaster ? G.disaster.name : 'WIND', cx, 42);
   const len = Math.min(Math.abs(G.wind) / MAX_WIND, 1) * 140, dir = Math.sign(G.wind);
   ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(cx - 150, 58); ctx.lineTo(cx + 150, 58); ctx.stroke();
