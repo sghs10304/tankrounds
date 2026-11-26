@@ -166,14 +166,72 @@ function makeDirtTexture() {
   return c;
 }
 
+const BIOME_DEFS = {
+  grass: {
+    name: '초원 평원', icon: '🌿',
+    sky: ['#070b24', '#1d1f4a', '#5a3466', '#c4627a'],
+    mtn: ['#2d2150', '#221a40'],
+    dirt: ['#93683c', '#5d3d22', '#2b1a0e'],
+    crust: ['#3f8f2e', '#6fcf4f', '#a3ec78'],
+    debris: ['#8a6038', '#5a3b21', '#6fcf4f', '#a67c4e'],
+    speedMult: 1.0, fuelMult: 1.0, slide: 0
+  },
+  desert: {
+    name: '작열하는 사막', icon: '🏜️',
+    sky: ['#2b1005', '#6b2b10', '#c85a17', '#f5b041'],
+    mtn: ['#5c260d', '#3e1807'],
+    dirt: ['#d4a359', '#9c6f34', '#5c3c16'],
+    crust: ['#b8863b', '#e6be75', '#fff0b3'],
+    debris: ['#d4a359', '#9c6f34', '#e6be75', '#c28b40'],
+    speedMult: 0.9, fuelMult: 1.45, slide: 0
+  },
+  tundra: {
+    name: '혹한의 툰드라', icon: '❄️',
+    sky: ['#041326', '#0d2e4d', '#24587a', '#7fb3d5'],
+    mtn: ['#153854', '#0d263b'],
+    dirt: ['#5d788a', '#394f5e', '#1e2c36'],
+    crust: ['#85c1e9', '#d6eaf8', '#ffffff'],
+    debris: ['#85c1e9', '#d6eaf8', '#5d788a', '#ffffff'],
+    speedMult: 1.15, fuelMult: 0.85, slide: 1
+  },
+  swamp: {
+    name: '독안개 늪지대', icon: '🐊',
+    sky: ['#07170d', '#132e1c', '#264d2b', '#4e7a3d'],
+    mtn: ['#14301b', '#0b1f10'],
+    dirt: ['#3b4a2b', '#26301b', '#141a0e'],
+    crust: ['#4a6b2c', '#7cb342', '#aed581'],
+    debris: ['#3b4a2b', '#4a6b2c', '#7cb342', '#26301b'],
+    speedMult: 0.65, fuelMult: 1.25, slide: 0
+  }
+};
+
+function makeBiomeDirt(biomeKey) {
+  const b = BIOME_DEFS[biomeKey] || BIOME_DEFS.grass;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  const g = x.createLinearGradient(0, 300, 0, H);
+  g.addColorStop(0, b.dirt[0]); g.addColorStop(0.45, b.dirt[1]); g.addColorStop(1, b.dirt[2]);
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
+  for (let i = 0; i < 3000; i++) {
+    x.fillStyle = Math.random() < 0.5 ? 'rgba(0,0,0,0.16)' : 'rgba(255,255,255,0.08)';
+    x.fillRect(fxRand(0, W), fxRand(300, H), fxRand(2, 5), fxRand(2, 5));
+  }
+  return c;
+}
+
 const Terrain = {
   top: new Float32Array(W),
   mask: new Uint8Array(W * H),
   cv: document.createElement('canvas'),
+  biome: 'grass',
   init() {
     this.cv.width = W; this.cv.height = H;
     this.c = this.cv.getContext('2d');
-    this.dirt = makeDirtTexture();
+    this.setBiome('grass');
+  },
+  setBiome(key) {
+    this.biome = BIOME_DEFS[key] ? key : 'grass';
+    this.dirt = makeBiomeDirt(this.biome);
     this.dirtPat = this.c.createPattern(this.dirt, 'no-repeat');
   },
   generate(x1, x2) {
@@ -197,6 +255,7 @@ const Terrain = {
     this.rebuild();
   },
   rebuild() {
+    const b = BIOME_DEFS[this.biome] || BIOME_DEFS.grass;
     this.mask.fill(0);
     for (let x = 0; x < W; x++) this.top[x] = Math.round(this.top[x]);
     for (let y = 0; y < H; y++) {
@@ -215,7 +274,7 @@ const Terrain = {
       for (let x = 1; x < W; x++) c.lineTo(x, this.top[x] + dy);
       c.strokeStyle = col; c.lineWidth = lw; c.stroke();
     };
-    line(1, '#3f8f2e', 9); line(-0.5, '#6fcf4f', 5); line(-2.5, '#a3ec78', 1.5);
+    line(1, b.crust[0], 9); line(-0.5, b.crust[1], 5); line(-2.5, b.crust[2], 1.5);
     c.fillStyle = '#262a38'; c.fillRect(0, H - BEDROCK, W, BEDROCK);
     c.fillStyle = '#3a3e50'; c.fillRect(0, H - BEDROCK, W, 3);
   },
