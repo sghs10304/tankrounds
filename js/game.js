@@ -545,7 +545,7 @@ function stepDrill(s, dt) {
 function detonate(s, hit) {
   const owner = s.owner;
   if (s.isDrawNuke) {
-    // 3% 돌발 핵폭탄 착탄: 맵 전체 초토화 후 양 플레이어 동시 사망 -> 무승부 처리
+    // 1% 돌발 핵폭탄 착탄: 맵 전체 초토화 후 양 플레이어 동시 사망 -> 무승부 처리
     Terrain.carve(s.x, s.y, 520);
     blastFX(s.x, s.y, 260, false);
     G.screenFlash = 1.0;
@@ -1567,6 +1567,9 @@ function drawTitle() {
   ctx.strokeText('탱크 라운즈 v4', W / 2, 210); ctx.fillStyle = '#ffd54f'; ctx.fillText('탱크 라운즈 v4', W / 2, 210);
   ctx.font = `22px ${FONT}`; ctx.fillStyle = '#c8cbe8';
   ctx.fillText('30종의 대환장 난장판 카드 · 중첩 진화 시스템 · 1R(50) → 2R(90) → 3R(120)!', W / 2, 260);
+
+  const modeBox = (x, idx, title, color, lines) => {
+    const isHov = hoverTitleBtn === idx;
     ctx.save();
     if (isHov) {
       ctx.translate(x + 205, 440);
