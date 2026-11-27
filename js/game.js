@@ -24,8 +24,8 @@ const players = [makePlayer(0), makePlayer(1)];
 
 const G = {
   state: 'title', stateT: 0, time: 0, timeScale: 1,
-  round: 0, turn: 0, nextFirst: 0, wind: 0,
-  biome: 'grass', disaster: null,
+  round: 0, turn: 0, turnCount: 0, nextFirst: 0, wind: 0,
+  biome: 'grass', disaster: null, localHintShown: false,
   shells: [], pending: [], particles: [], rings: [], floaters: [], flashes: [], fields: [], streaks: [],
   poisons: [], crates: [], portals: [], mines: [], lightnings: [],
   events: [], // 확장용 자연재해/특수 이벤트 플러그인 배열
@@ -111,7 +111,7 @@ function startMatch() {
 }
 
 function startRound() {
-  G.round++; G.wind = 0; G.disaster = null;
+  G.round++; G.turnCount = 0; G.wind = 0; G.disaster = null;
   if (Net.active && !Net.isHost) return;
   const seed = (Date.now() ^ ((Math.random() * 0xFFFFFFFF) >>> 0)) >>> 0;
   RNG.setSeed(seed);
@@ -130,9 +130,33 @@ function startRound() {
   showBanner(`ROUND ${G.round}`, sub, '#ffffff', 2.2);
 }
 
+function applySuddenDeath() {
+  if (G.turnCount <= SUDDEN_DEATH_TURN) return;
+  const sdLevel = G.turnCount - SUDDEN_DEATH_TURN;
+  const sdDmg = 8 + sdLevel * 4;
+  for (const pl of players) {
+    if (pl.alive) {
+      damageTank(pl, sdDmg, '#ff1744', null);
+    }
+  }
+  const dropCount = Math.min(5, 1 + Math.floor(sdLevel / 2));
+  Sfx.airstrike();
+  for (let k = 0; k < dropCount; k++) {
+    const target = players[k % 2];
+    const mx = target.alive ? clamp(target.x + rand(-180, 180), 40, W - 40) : rand(80, W - 80);
+    G.pending.push({
+      t: 0.25 + k * 0.14, owner: players[G.turn],
+      custom: { x: mx, y: -40, vx: rand(-60, 60), vy: 720, damage: 14 + sdLevel * 3, radius: 52 }
+    });
+  }
+  G.shake = Math.max(G.shake, 16);
+  G.floaters.push({ x: W / 2, y: 185, text: `🔥 서든데스 (${G.turnCount}턴)! 전원 -${sdDmg} & 하늘 유성 낙하!`, color: '#ff5252', t: 0, life: 2.2 });
+}
+
 function beginTurn(i, forcedWind = null, forcedSeed = null) {
   if (forcedSeed !== null) RNG.setSeed(forcedSeed);
   G.turn = i;
+  G.turnCount++;
   G.wind = forcedWind !== null ? forcedWind : Math.round(rand(-MAX_WIND, MAX_WIND) * 10) / 10;
   for (const p of players) p.turnDmgTaken = 0;
   const p = players[i];
@@ -140,6 +164,12 @@ function beginTurn(i, forcedWind = null, forcedSeed = null) {
   if (p.empDebuff) { p.fuel = Math.round(p.stats.maxFuel * 0.2); p.empDebuff = false; }
   else { p.fuel = p.stats.maxFuel; }
   p.charging = false; p.charge = 0; p.chargeT = 0;
+
+  // 로컬 2인용 최초 시작 시 1회 조작법 팝업 안내
+  if (!Net.active && !G.localHintShown && G.round === 1 && i === 0) {
+    G.localHintShown = true;
+    G.floaters.push({ x: players[1].x, y: players[1].y - 95, text: '💡 P2 조작: 방향키(←→↑↓) + Enter!', color: '#ff8a65', t: 0, life: 3.8 });
+  }
 
   for (let idx = G.poisons.length - 1; idx >= 0; idx--) {
     const pz = G.poisons[idx];
@@ -157,6 +187,8 @@ function beginTurn(i, forcedWind = null, forcedSeed = null) {
     G.mines[idx].life--;
     if (G.mines[idx].life <= 0) G.mines.splice(idx, 1);
   }
+
+  applySuddenDeath();
 
   if (G.crates.length === 0) {
     const g = generateSkyGimmicksData();
@@ -1467,8 +1499,9 @@ function drawHUD() {
   });
   const cx = W / 2;
   const bInfo = BIOME_DEFS[G.biome] || BIOME_DEFS.grass;
-  ctx.textAlign = 'center'; ctx.font = `bold 14px ${FONT}`; ctx.fillStyle = '#aab';
-  ctx.fillText(`ROUND ${G.round} · ${bInfo.icon} ${bInfo.name}${Net.active ? ' · ONLINE' : ''}`, cx, 22);
+  const isSD = G.turnCount > SUDDEN_DEATH_TURN;
+  ctx.textAlign = 'center'; ctx.font = `bold 14px ${FONT}`; ctx.fillStyle = isSD ? '#ff5252' : '#aab';
+  ctx.fillText(`ROUND ${G.round} (${G.turnCount}턴${isSD ? ' · 🔥서든데스' : ''}) · ${bInfo.icon} ${bInfo.name}${Net.active ? ' · ONLINE' : ''}`, cx, 22);
   ctx.font = `11px ${FONT}`; ctx.fillStyle = '#889'; ctx.fillText(G.disaster ? G.disaster.name : 'WIND', cx, 42);
   const len = Math.min(Math.abs(G.wind) / MAX_WIND, 1) * 140, dir = Math.sign(G.wind);
   ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
