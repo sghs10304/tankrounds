@@ -26,6 +26,7 @@ function newStats() {
     synVampire: false, synGatling: false, synTimeFreeze: false, synVoid: false,
     synFortress: false, synRam: false, synNitro: false, synTyphoon: false,
     armor: 0, repair: 0, knockback: 0, swap: 0, duck: 0, anvil: 0, banana: 0,
+    bee: 0, turtle: 0, bowling: 0, balloon: 0, frog: 0, firework: 0, mole: 0, burger: 0, octopus: 0, gift: 0,
     hooks: { onFire: [], onUpdate: [], onApex: [], onImpact: [], onDetonate: [], onExplode: [], onTurnStart: [] },
   };
 }
@@ -86,8 +87,8 @@ const SYNERGY_DEFS = [
   },
   {
     id: 'gatling', req: ['burst', 'buckshot'], icon: '🔥', name: '지옥의 개틀링', color: '#ffd740',
-    desc: '발사 탄수 +3발 추가 & 연사 속도 초고속화!',
-    apply(s) { s.synGatling = true; s.shots += 3; s.shotDelay = 0.03; }
+    desc: '발사 탄수 +2발 추가 & 연사 속도 초고속화!',
+    apply(s) { s.synGatling = true; s.shots += 2; s.shotDelay = 0.03; }
   },
   {
     id: 'timefreeze', req: ['frost', 'sawblade'], icon: '🧊', name: '절대영도 빙하기', color: '#81d4fa',
@@ -243,7 +244,7 @@ function hookMeteor(ctx_, owner) {
     const mx = rand(120, W - 120);
     G.pending.push({
       t: 0.22 + i * 0.1, owner,
-      custom: { x: mx, y: -40, vx: rand(-150, 150), vy: 690, damage: 8 + lv * 3, radius: ctx_.radius * (0.75 + lv * 0.1) }
+      custom: { x: mx, y: -40, vx: rand(-150, 150), vy: 690, damage: 10 + lv * 3, radius: ctx_.radius * (0.75 + lv * 0.1) }
     });
   }
 }
@@ -383,9 +384,9 @@ function hookFrost(ctx_, owner) {
   burst(ctx_.x, ctx_.y, 18 + lv * 6, { colors: ['#e1f5fe', '#81d4fa', '#29b6f6', '#ffffff'], speed: 260, life: 0.7, size: 3.5, kind: 'spark' });
   for (const e of hostileTanks(owner)) {
     if (Math.hypot(e.x - ctx_.x, (e.y - 15) - ctx_.y) < ctx_.radius * (1.6 + lv * 0.3)) {
-      e.empDebuff = owner.stats.synTimeFreeze ? 2 : 1; // 1: 연료 -80%, 2(시너지): 연료 -100% 완전 동결!
+      e.empDebuff = owner.stats.synTimeFreeze ? 2 : 1; // 1: 연료 -60%, 2(시너지): 연료 -100% 완전 동결!
       damageTank(e, 12 + lv * 5, '#4fc3f7', owner);
-      const freezeMsg = owner.stats.synTimeFreeze ? '🧊 절대영도 완전 동결! (연료 0)' : '❄️ 엔진 동결! (연료 -80%)';
+      const freezeMsg = owner.stats.synTimeFreeze ? '🧊 절대영도 완전 동결! (연료 0)' : '❄️ 엔진 동결! (연료 -60%)';
       G.floaters.push({ x: e.x, y: e.y - 72, text: freezeMsg, color: '#81d4fa', t: 0, life: 1.3 });
     }
   }
@@ -454,7 +455,7 @@ function hookDuck(ctx_, owner) {
   const lv = owner.stats.duck;
   const count = 2 + lv;
   for (let i = 0; i < count; i++) {
-    G.fields.push({ type: 'duck', x: clamp(ctx_.x + (i - (count - 1) / 2) * 34, 12, W - 12), y: ctx_.y, owner, t: -i * 0.12, life: 2.4, damage: 7 + lv * 2, dir: 1 });
+    spawnCritter(ctx_, owner, { icon: '🦆', x: ctx_.x + (i - (count - 1) / 2) * 34, delay: i * 0.12, speed: 190, life: 2.4, damage: 7 + lv * 2, radius: 34 });
   }
   G.floaters.push({ x: ctx_.x, y: ctx_.y - 55, text: '🦆 꽥꽥 돌격대!', color: '#ffee58', t: 0, life: 1.2 });
 }
@@ -477,6 +478,110 @@ function hookBanana(ctx_, owner) {
     }));
   }
   Sfx.pop();
+}
+
+function spawnCritter(ctx_, owner, o) {
+  const x = clamp(o.x, 12, W - 12);
+  const e = enemyTank(owner, x, ctx_.y);
+  G.fields.push(Object.assign({ type: 'critter', y: ctx_.y, owner, t: -(o.delay || 0), dir: e && e.x < x ? -1 : 1 }, o, { x }));
+}
+function nearEnemy(ctx_, owner, range) {
+  const e = enemyTank(owner, ctx_.x, ctx_.y);
+  return e && Math.hypot(e.x - ctx_.x, (e.y - 15) - ctx_.y) <= range ? e : null;
+}
+function toast(x, y, text, color) {
+  G.floaters.push({ x, y, text, color, t: 0, life: 1.3 });
+}
+function hookBee(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.bee, count = 3 + lv;
+  for (let i = 0; i < count; i++) {
+    spawnCritter(ctx_, owner, { icon: '🐝', x: ctx_.x + (i - (count - 1) / 2) * 20, delay: i * 0.1, speed: 250, life: 1.8, damage: 4 + lv, radius: 24, fly: true, size: 20 });
+  }
+  toast(ctx_.x, ctx_.y - 55, '🐝 벌집을 건드렸다!', '#ffca28');
+}
+function hookTurtle(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.turtle;
+  spawnCritter(ctx_, owner, { icon: '🐢', x: ctx_.x, speed: 85, life: 3.6, damage: 18 + lv * 8, radius: 55 + lv * 5, size: 34 });
+  toast(ctx_.x, ctx_.y - 75, '🐢 폭탄 거북 출동', '#66bb6a');
+}
+function hookBowling(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.bowling;
+  spawnCritter(ctx_, owner, { icon: '🎳', x: ctx_.x, speed: 360 + lv * 40, life: 1.8, damage: 9 + lv * 5, radius: 38, knock: 320 + lv * 70, straight: true, size: 30 });
+}
+function hookBalloon(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.balloon;
+  const e = nearEnemy(ctx_, owner, 105 + lv * 25);
+  if (!e || G.fields.some(f => f.type === 'balloon' && f.target === e)) return;
+  G.fields.push({ type: 'balloon', target: e, owner, t: 0, life: 1.1 + lv * 0.15, damage: 10 + lv * 6 });
+  toast(e.x, e.y - 105, '🎈 두둥실~', '#ff80ab');
+}
+function hookFrog(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const count = 3 + owner.stats.frog;
+  for (let i = 0; i < count; i++) {
+    G.pending.push({
+      t: 0.3 + i * 0.12, owner,
+      custom: { x: clamp(ctx_.x + rand(-130, 130), 20, W - 20), y: -30, vx: rand(-40, 40), vy: 430, damage: 7, radius: 28, icon: '🐸', hops: 1 }
+    });
+  }
+  toast(ctx_.x, ctx_.y - 55, '🐸 개구리 비!', '#9ccc65');
+}
+function hookFirework(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const count = 4 + owner.stats.firework * 2;
+  for (let i = 0; i < count; i++) {
+    const a = -Math.PI * (0.15 + 0.7 * i / (count - 1));
+    G.shells.push(makeShell(owner, ctx_.x, ctx_.y - 14, Math.cos(a) * 330, Math.sin(a) * 420, {
+      r: 5, damage: 6, radius: 28, child: true, apex: true, age: 0.3, icon: '✨'
+    }));
+  }
+  Sfx.pop();
+  burst(ctx_.x, ctx_.y - 20, 26, { colors: ['#ff4081', '#ffea00', '#00e5ff', '#76ff03'], speed: 380, life: 0.8, size: 3.5, kind: 'spark' });
+}
+function hookMole(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.mole;
+  const e = nearEnemy(ctx_, owner, 110 + lv * 25);
+  if (!e) return;
+  Terrain.carve(e.x, e.y + 14 + lv * 6, 30 + lv * 6);
+  e.air = true;
+  damageTank(e, 6 + lv * 5, '#bcaaa4', owner);
+  burst(e.x, e.y, 18, { colors: getDirtColors(), speed: 280, life: 0.8, size: 4, ground: true, kind: 'debris' });
+  toast(e.x, e.y - 75, '🦫 두더지의 함정!', '#d7ccc8');
+}
+function hookBurger(ctx_, owner) {
+  if (ctx_.shell.child || !owner.alive) return;
+  if (!nearEnemy(ctx_, owner, 100)) return;
+  const heal = Math.min(owner.roundMaxHp - owner.hp, Math.round(owner.roundMaxHp * (0.04 + owner.stats.burger * 0.05)));
+  if (heal <= 0) return;
+  owner.hp += heal;
+  toast(owner.x, owner.y - 70, `🍔 냠냠 +${heal}`, '#ffcc80');
+}
+function hookOctopus(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.octopus;
+  const e = nearEnemy(ctx_, owner, 110 + lv * 30);
+  if (!e) return;
+  e.empDebuff = Math.max(e.empDebuff, 1);
+  damageTank(e, 5 + lv * 5, '#ce93d8', owner);
+  burst(e.x, e.y - 18, 30, { colors: ['#1a0826', '#4a148c', '#2d0a45'], speed: 190, life: 1.0, size: 6, grav: 0.5 });
+  toast(e.x, e.y - 75, '🐙 먹물 범벅! 연료 감소', '#ce93d8');
+}
+function hookGift(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const pool = ['duck', 'banana', 'bee', 'turtle', 'frog', 'firework', 'anvil'];
+  const id = pool[(RNG.next() * pool.length) | 0];
+  const fn = { duck: hookDuck, banana: hookBanana, bee: hookBee, turtle: hookTurtle, frog: hookFrog, firework: hookFirework, anvil: hookAnvil }[id];
+  // 해당 카드가 없어도 선물 카드 레벨로 발동
+  const stats = owner.stats, before = stats[id];
+  stats[id] = Math.max(1, stats.gift);
+  fn(ctx_, owner);
+  stats[id] = before;
+  toast(ctx_.x, ctx_.y - 100, `🎁 선물 개봉: ${CARD_DEFS[id].icon}`, '#ff8a80');
 }
 
 const CARD_DEFS = {
@@ -507,8 +612,8 @@ const CARD_DEFS = {
   },
   burst: {
     icon: '🔫', name: '3연발 사격', short: '3연발', cat: '화력 강화', color: '#ffca28',
-    desc: ['0.13초 간격 3발 연속 발사 (58% 피해)', '★시너지(산탄): 지옥의 개틀링 기관포'],
-    apply(s) { s.shots += 2; s.damage *= 0.58; }
+    desc: ['0.13초 간격 3발 연속 발사 (52% 피해)', '★시너지(산탄): 지옥의 개틀링 기관포'],
+    apply(s) { s.shots += 2; s.damage *= 0.52; }
   },
   drill: {
     icon: '🔩', name: '드릴 관통탄', short: '드릴', cat: '탄환 변형', color: '#b0bec5',
@@ -532,22 +637,22 @@ const CARD_DEFS = {
   },
   sniper: {
     icon: '🔭', name: '초고속 저격탄', short: '저격', cat: '화력 강화', color: '#40c4ff',
-    desc: ['탄속 ×1.35 & 조준 가이드 2배 연장', '★시너지(드릴): 초전자 레일건 진화'],
-    apply(s) { s.shellSpeed *= 1.35; s.guideTime *= 2; }
+    desc: ['탄속·가이드 강화 & 공격력 +15%', '★시너지(드릴): 초전자 레일건 진화'],
+    apply(s) { s.shellSpeed *= 1.35; s.guideTime *= 2; s.damage *= 1.15; }
   },
   glass: {
     icon: '🔮', name: '유리 대포', short: '유리대포', cat: '하이리스크', color: '#e040fb', curse: true,
-    desc: ['공격력 ×1.85 폭증 / 최대 체력 -30%', '★중첩: 스치면 즉사급 한방 화력 완성'],
-    apply(s) { s.damage *= 1.85; s.maxHp *= 0.7; }
+    desc: ['공격력 ×1.6 증가 / 최대 체력 -30%', '★중첩: 스치면 즉사급 한방 화력 완성'],
+    apply(s) { s.damage *= 1.6; s.maxHp *= 0.7; }
   },
   leech: {
     icon: '🧛', name: '흡혈 박쥐', short: '흡혈', cat: 'ROUNDS 엽기', color: '#ff1744',
-    desc: ['입힌 피해의 45%만큼 내 체력 회복', '★시너지(맹독): 독구름 피해도 흡혈'],
-    apply(s) { s.leech += 0.45; }
+    desc: ['입힌 피해의 30%만큼 내 체력 회복', '★시너지(맹독): 독구름 피해도 흡혈'],
+    apply(s) { s.leech += 0.3; }
   },
   phoenix: {
     icon: '🔥', name: '불사조 부활', short: '부활', cat: 'ROUNDS 엽기', color: '#ff6d00',
-    desc: ['사망 시 체력 40%로 1회 즉시 부활', '★중첩: 라운드당 부활 목숨 +1개 추가'],
+    desc: ['사망 시 체력 30%로 1회 즉시 부활', '★중첩: 라운드당 부활 목숨 +1개 추가'],
     apply(s) { s.phoenix += 1; }
   },
   volcano: {
@@ -557,8 +662,8 @@ const CARD_DEFS = {
   },
   nuke: {
     icon: '☢️', name: '전술 핵탄두', short: '핵폭탄', cat: '대환장 난장판', color: '#c6ff00',
-    desc: ['폭발 반경 ×2.0배 & 공격력 ×1.3배', '★시너지(블랙홀): 초신성 붕괴 연쇄'],
-    apply(s) { s.nuke += 1; s.blastRadius *= 2.0; s.damage *= 1.3; s.shellSize *= 1.45; }
+    desc: ['폭발 반경 ×1.6배 & 공격력 ×1.2배', '★시너지(블랙홀): 초신성 붕괴 연쇄'],
+    apply(s) { s.nuke += 1; s.blastRadius *= 1.6; s.damage *= 1.2; s.shellSize *= 1.45; }
   },
   meteor: {
     icon: '☄️', name: '유성우 폭격', short: '유성우', cat: '대환장 난장판', color: '#ff9100',
@@ -578,7 +683,7 @@ const CARD_DEFS = {
   buckshot: {
     icon: '💥', name: '샷건 산탄포', short: '산탄포', cat: '대환장 난장판', color: '#ffd740',
     desc: ['부채꼴로 산탄 6발을 동시에 발사', '★시너지(3연발): 지옥의 개틀링 난사'],
-    apply(s) { s.buckshot += 1; s.shots += 5; s.shotDelay = 0.02; s.damage *= 0.36; }
+    apply(s) { s.buckshot += 1; s.shots += 5; s.shotDelay = 0.02; s.damage *= 0.28; }
   },
   ufo: {
     icon: '🛸', name: 'UFO 납치 광선', short: 'UFO', cat: '대환장 난장판', color: '#ea80fc',
@@ -617,7 +722,7 @@ const CARD_DEFS = {
   },
   frost: {
     icon: '❄️', name: '절대영도 빙결탄', short: '빙결탄', cat: '신규 대환장', color: '#4fc3f7',
-    desc: ['착탄 시 17 빙결 피해 + 적 연료 80% 동결', '★시너지(톱날): 빙결 시 연료 100% 완전동결'],
+    desc: ['착탄 시 17 빙결 피해 + 적 연료 60% 동결', '★시너지(톱날): 빙결 시 연료 100% 완전동결'],
     apply(s) { s.frost += 1; addHook(s, 'onExplode', hookFrost); }
   },
   chaos: {
@@ -674,6 +779,56 @@ const CARD_DEFS = {
     icon: '🍌', name: '통통 바나나', short: '바나나', cat: '장난 카드', color: '#ffd600',
     desc: ['폭발하면 바나나 3개가 튀어올라 연쇄 폭발', '★중첩: 바나나 개수 증가'],
     apply(s) { s.banana += 1; addHook(s, 'onExplode', hookBanana); }
+  },
+  bee: {
+    icon: '🐝', name: '성난 벌떼', short: '벌떼', cat: '장난 카드', color: '#ffca28',
+    desc: ['착탄 후 벌들이 날아가 적을 연속 공격', '★중첩: 벌 마릿수·침 피해 증가'],
+    apply(s) { s.bee += 1; addHook(s, 'onExplode', hookBee); }
+  },
+  turtle: {
+    icon: '🐢', name: '폭탄 거북이', short: '거북', cat: '장난 카드', color: '#66bb6a',
+    desc: ['느리지만 강력한 폭탄 거북이 출동', '★중첩: 폭발 피해·범위 증가'],
+    apply(s) { s.turtle += 1; addHook(s, 'onExplode', hookTurtle); }
+  },
+  bowling: {
+    icon: '🎳', name: '볼링 스트라이크', short: '볼링', cat: '장난 카드', color: '#ef9a9a',
+    desc: ['볼링공이 땅을 굴러 적을 날려버림', '★중첩: 속도·튕겨내는 힘 증가'],
+    apply(s) { s.bowling += 1; addHook(s, 'onExplode', hookBowling); }
+  },
+  balloon: {
+    icon: '🎈', name: '풍선 납치', short: '풍선', cat: '장난 카드', color: '#ff80ab',
+    desc: ['적 근처 착탄 시 띄웠다가 떨어뜨림', '★중첩: 발동 범위·피해 증가'],
+    apply(s) { s.balloon += 1; addHook(s, 'onExplode', hookBalloon); }
+  },
+  frog: {
+    icon: '🐸', name: '개구리 비', short: '개구리', cat: '장난 카드', color: '#9ccc65',
+    desc: ['하늘에서 개구리 4마리가 통통 낙하', '★중첩: 개구리 수 증가'],
+    apply(s) { s.frog += 1; addHook(s, 'onExplode', hookFrog); }
+  },
+  firework: {
+    icon: '🎇', name: '폭죽 축제', short: '폭죽', cat: '장난 카드', color: '#ff4081',
+    desc: ['착탄 지점에서 폭죽 6발이 사방으로', '★중첩: 폭죽 +2발'],
+    apply(s) { s.firework += 1; addHook(s, 'onExplode', hookFirework); }
+  },
+  mole: {
+    icon: '🦫', name: '두더지 함정', short: '두더지', cat: '장난 카드', color: '#bcaaa4',
+    desc: ['적 근처 착탄 시 발밑에 구덩이 생성', '★중첩: 구덩이 크기·피해 증가'],
+    apply(s) { s.mole += 1; addHook(s, 'onExplode', hookMole); }
+  },
+  burger: {
+    icon: '🍔', name: '전투 식량', short: '버거', cat: '장난 카드', color: '#ffcc80',
+    desc: ['적 근처에 맞히면 내 체력 9% 회복', '★중첩: 회복량 +5%'],
+    apply(s) { s.burger += 1; addHook(s, 'onExplode', hookBurger); }
+  },
+  octopus: {
+    icon: '🐙', name: '먹물 문어', short: '문어', cat: '장난 카드', color: '#ce93d8',
+    desc: ['적에게 먹물! 다음 턴 이동 연료 감소', '★중첩: 발동 범위·피해 증가'],
+    apply(s) { s.octopus += 1; addHook(s, 'onExplode', hookOctopus); }
+  },
+  gift: {
+    icon: '🎁', name: '수상한 선물상자', short: '선물', cat: '장난 카드', color: '#ff8a80',
+    desc: ['착탄마다 장난 효과 중 하나가 랜덤 발동', '★중첩: 나오는 효과의 레벨 증가'],
+    apply(s) { s.gift += 1; addHook(s, 'onExplode', hookGift); }
   },
 };
 

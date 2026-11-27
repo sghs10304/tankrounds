@@ -13,7 +13,7 @@ const MAX_SHELL_SPEED = 1150;
 const BASE_HW = 16;
 const BARREL_LEN = 34, PIVOT_Y = 22;
 const WINS_TO_MATCH = 5;
-const SUDDEN_DEATH_TURN = 10; // 10턴 이후 서든데스 발동
+const SUDDEN_DEATH_TURN = 20; // 20턴 이후 서든데스 발동
 const TAU = Math.PI * 2;
 const FONT = "'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif";
 

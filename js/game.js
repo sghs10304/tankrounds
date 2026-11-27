@@ -218,7 +218,7 @@ function beginTurn(i, forcedWind = null, forcedSeed = null) {
   const p = players[i];
 
   if (p.empDebuff === 2) { p.fuel = 0; p.empDebuff = 0; }
-  else if (p.empDebuff === 1) { p.fuel = Math.round(p.stats.maxFuel * 0.2); p.empDebuff = 0; }
+  else if (p.empDebuff === 1) { p.fuel = Math.round(p.stats.maxFuel * 0.4); p.empDebuff = 0; }
   else { p.fuel = p.stats.maxFuel; }
   p.charging = false; p.charge = 0; p.chargeT = 0;
 
@@ -597,8 +597,12 @@ function stepSawblade(s, dt) {
   s.sawTime -= dt;
   s.x += s.sawDir * 300 * dt;
   s.x = clamp(s.x, 10, W - 10);
-  s.y = Terrain.h(s.x) - 2;
-  Terrain.carve(s.x, s.y, 13);
+  const ground = Terrain.h(s.x);
+  s.y = ground - 6;
+  if (s.sawCarveX === undefined || Math.abs(s.x - s.sawCarveX) >= 12) {
+    s.sawCarveX = s.x;
+    Terrain.carve(s.x, ground - 10, 13);
+  }
   P(s.x, s.y, fxRand(-90, 90), fxRand(-140, -40), { life: 0.35, size: 2.5, color: '#ffd54f', kind: 'spark' });
   for (const p of players) {
     if (p.alive && isHostile(s.owner, p) && hitsTank(s.x, s.y, s.r + 6, p)) {
@@ -607,6 +611,7 @@ function stepSawblade(s, dt) {
     }
   }
   if (s.sawTime <= 0 || s.x <= 12 || s.x >= W - 12) {
+    s.radius *= 0.6;
     detonate(s, { type: 'terrain' });
     return false;
   }
@@ -709,7 +714,7 @@ function damageTank(p, amt, col = '#ff5252', attacker = null) {
   if (p.hp <= 0 && p.alive) {
     if (p.phoenixCharges > 0) {
       p.phoenixCharges--;
-      p.hp = Math.max(15, Math.round(p.roundMaxHp * 0.4));
+      p.hp = Math.max(15, Math.round(p.roundMaxHp * 0.3));
       Sfx.phoenix();
       burst(p.x, p.y - 16, 35, { colors: FIRE_COLORS, speed: 360, life: 0.9, size: 4, kind: 'spark' });
       G.rings.push({ x: p.x, y: p.y - 16, max: 110, t: 0, life: 0.45, color: '255,109,0' });
@@ -753,16 +758,34 @@ function updateFields(dt) {
   for (let i = G.fields.length - 1; i >= 0; i--) {
     const f = G.fields[i];
     f.t += dt;
-    if (f.type === 'duck') {
+    if (f.type === 'critter') {
       if (f.t < 0) continue;
       const e = enemyTank(f.owner, f.x, f.y);
-      if (e) f.dir = e.x >= f.x ? 1 : -1;
-      f.x = clamp(f.x + f.dir * 190 * dt, 10, W - 10);
-      f.y = Terrain.h(f.x) - 9;
+      if (e && !f.straight) f.dir = e.x >= f.x ? 1 : -1;
+      f.x = clamp(f.x + f.dir * f.speed * dt, 10, W - 10);
+      if (f.fly) {
+        if (e) f.y += clamp(e.y - 18 - f.y, -220 * dt, 220 * dt);
+      } else f.y = Terrain.h(f.x) - 9;
       const reached = e && Math.abs(e.x - f.x) < 20 * e.stats.tankScale && Math.abs(e.y - f.y) < 50;
-      if (reached || f.t >= f.life) {
+      if (reached || f.t >= f.life || (f.straight && (f.x <= 10 || f.x >= W - 10))) {
         G.fields.splice(i, 1);
-        explode({ x: f.x, y: f.y, radius: 34, damage: f.damage }, f.owner);
+        if (reached && f.knock) { e.air = true; e.vy = -f.knock; e.vx += f.dir * f.knock * 0.6; }
+        explode({ x: f.x, y: f.y, radius: f.radius, damage: f.damage, noCarve: f.fly }, f.owner);
+      }
+      continue;
+    }
+    if (f.type === 'balloon') {
+      const e = f.target;
+      if (e.alive && f.t < f.life) {
+        e.air = true; e.vy = 0;
+        e.y = Math.max(170, e.y - 230 * dt);
+      } else {
+        G.fields.splice(i, 1);
+        if (e.alive) {
+          e.vy = 420;
+          Sfx.pop();
+          damageTank(e, f.damage, '#ff80ab', f.owner);
+        }
       }
       continue;
     }
@@ -1203,7 +1226,7 @@ function update(raw) {
           G.pending.splice(i, 1);
           if (q.custom) {
             const c = q.custom;
-            G.shells.push(makeShell(q.owner, c.x, c.y, c.vx, c.vy, { damage: c.damage, radius: c.radius, child: true, r: 3.5, icon: c.icon }));
+            G.shells.push(makeShell(q.owner, c.x, c.y, c.vx, c.vy, { damage: c.damage, radius: c.radius, child: true, r: 3.5, icon: c.icon, hops: c.hops || 0 }));
           } else if (q.chainBoom) {
             const cb = q.chainBoom;
             explode({ x: cb.x, y: Terrain.h(cb.x), radius: cb.radius, damage: cb.damage }, q.owner);
@@ -1512,13 +1535,23 @@ function drawMinesAndPoisons() {
 }
 
 function drawField(f) {
-  if (f.type === 'duck') {
+  if (f.type === 'critter') {
     if (f.t < 0) return;
     ctx.save();
-    ctx.translate(f.x, f.y - Math.abs(Math.sin(f.t * 16)) * 4);
-    ctx.scale(-f.dir, 1);
-    ctx.font = `24px ${FONT}`; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
-    ctx.fillText('🦆', 0, 6);
+    ctx.translate(f.x, f.y - Math.abs(Math.sin(f.t * 16)) * (f.straight ? 0 : 4));
+    if (f.straight) ctx.rotate(f.t * 12 * f.dir); else ctx.scale(-f.dir, 1);
+    ctx.font = `${f.size || 24}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+    ctx.fillText(f.icon, 0, 0);
+    ctx.restore();
+    return;
+  }
+  if (f.type === 'balloon') {
+    const e = f.target, y = e.y - 90 + Math.sin(f.t * 5) * 4;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(e.x, e.y - 30); ctx.lineTo(e.x, y); ctx.stroke();
+    ctx.font = `40px ${FONT}`; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+    ctx.fillText('🎈', e.x, y);
     ctx.restore();
     return;
   }
@@ -1973,7 +2006,7 @@ function drawTitle() {
   ctx.font = `900 80px ${FONT}`; ctx.lineWidth = 9; ctx.strokeStyle = '#000';
   ctx.strokeText('탱크 라운즈 v5', W / 2, 205); ctx.fillStyle = '#ffd54f'; ctx.fillText('탱크 라운즈 v5', W / 2, 205);
   ctx.font = `22px ${FONT}`; ctx.fillStyle = '#c8cbe8';
-  ctx.fillText('1:1 · 2:2 팀전 · 온라인 4인 난투! · 39종 카드 & 12종 시너지 각성 · 10턴 서든데스!', W / 2, 255);
+  ctx.fillText('1:1 · 2:2 팀전 · 온라인 4인 난투! · 49종 카드 & 12종 시너지 각성 · 20턴 서든데스!', W / 2, 255);
 
   TITLE_BTNS.forEach((b, idx) => {
     const isHov = hoverTitleBtn === idx;
