@@ -22,6 +22,10 @@
   .btn:disabled{opacity:0.5;cursor:not-allowed}
   .btn-orange{background:#ff8a65}
   .btn-gray{background:#394075;color:#fff;margin-top:8px;width:100%}
+  .mode-row{display:flex;gap:8px;margin-bottom:16px}
+  .mode-btn{flex:1;background:#0b0d1e;color:#b8bcd8;border:2px solid #394075;border-radius:10px;padding:10px 4px;font-weight:800;cursor:pointer}
+  .mode-btn.on{border-color:#69f0ae;color:#69f0ae}
+  .mode-btn:disabled{cursor:default}
   #p2p-status{font-size:14px;color:#ffd54f;margin-top:10px;min-height:20px;line-height:1.4}
 </style>
 </head>
@@ -31,7 +35,12 @@
 <!-- 온라인 멀티플레이 연결 모달 -->
 <div id="p2p-modal">
   <div class="modal-box">
-    <h2>🌐 온라인 1:1 멀티 대전</h2>
+    <h2>🌐 온라인 멀티 대전</h2>
+    <div class="mode-row">
+      <button class="mode-btn" data-mode="1v1">⚔️ 1:1</button>
+      <button class="mode-btn" data-mode="2v2">🛡️ 2:2 팀전</button>
+      <button class="mode-btn" data-mode="ffa4">👑 4인 난투</button>
+    </div>
     <p>친구에게 방 코드를 알려주거나,<br>친구가 만든 4자리 방 코드를 입력하세요.</p>
     <div id="host-section">
       <div style="font-size:13px;color:#80deea;margin-bottom:6px">내 방 코드 (클릭해서 복사)</div>
@@ -47,9 +56,9 @@
 </div>
 
 <!-- 기능별 모듈 스크립트 (순서 유지) -->
-<script src="js/core.js"></script>
-<script src="js/cards.js"></script>
-<script src="js/network.js"></script>
-<script src="js/game.js"></script>
+<script src="js/core.js?v=5.1"></script>
+<script src="js/cards.js?v=5.1"></script>
+<script src="js/network.js?v=5.1"></script>
+<script src="js/game.js?v=5.1"></script>
 </body>
 </html>
