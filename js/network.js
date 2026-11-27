@@ -254,6 +254,7 @@ const Net = {
         this.lastHandledFireSeq = -1;
         RNG.setSeed(msg.seed);
         G.round = msg.round;
+        G.turnCount = 0;
         G.nextFirst = msg.nextFirst;
         if (msg.biome) setBiome(msg.biome);
         Terrain.top.set(msg.terrainTop);
