@@ -93,7 +93,7 @@ function resetPlayersForRound() {
 }
 
 function setupField() {
-  const biomeKeys = Object.keys(BIOME_DEFS);
+  const biomeKeys = Object.keys(BIOME_DEFS).filter(k => k !== G.biome);
   const pickedBiome = biomeKeys[(RNG.next() * biomeKeys.length) | 0];
   setBiome(pickedBiome);
   const x1 = Math.round(rand(150, 300)), x2 = Math.round(W - rand(150, 300));
@@ -101,8 +101,7 @@ function setupField() {
   players[0].x = x1; players[1].x = x2;
   resetPlayersForRound();
   const gimmicks = generateSkyGimmicksData();
-  G.crates = gimmicks.crates;
-  G.portals = gimmicks.portals;
+  G.crates = gimmicks.crates; G.portals = gimmicks.portals;
 }
 
 function startMatch() {
@@ -121,64 +120,14 @@ function startRound() {
   const wind = Math.round(rand(-MAX_WIND, MAX_WIND) * 10) / 10;
   if (Net.active && Net.isHost) {
     Net.send({
-      type: 'roundSetup',
-      seed,
-      biome: G.biome,
-      round: G.round,
-      nextFirst: G.nextFirst,
-      turn: G.nextFirst,
-      wind,
-      terrainTop: Array.from(Terrain.top),
-      p0x: players[0].x,
-      p1x: players[1].x,
-      crates: G.crates,
-      portals: G.portals
+      type: 'roundSetup', seed, biome: G.biome, round: G.round, nextFirst: G.nextFirst, turn: G.nextFirst, wind,
+      terrainTop: Array.from(Terrain.top), p0x: players[0].x, p1x: players[1].x, crates: G.crates, portals: G.portals
     }, 1);
   }
   beginTurn(G.nextFirst, wind, seed);
   const b = BIOME_DEFS[G.biome];
   const sub = G.round === 1 ? `⚡ 초고속 1R (체력 50) · ${b.icon} ${b.name}` : G.round === 2 ? `⚡ 스피드 2R (체력 90) · ${b.icon} ${b.name}` : G.round === 3 ? `⚡ 3R (체력 120) · ${b.icon} ${b.name}` : `${b.icon} ${b.name} · ${players[G.nextFirst].name} 선공`;
   showBanner(`ROUND ${G.round}`, sub, '#ffffff', 2.2);
-}
-
-function triggerDisaster() {
-  G.disaster = null;
-  const roll = RNG.next();
-  if (roll < 0.16) {
-    // 1) 태풍: 초강풍 발생 + 양쪽 탱크 바람 방향으로 밀림
-    const dir = RNG.next() < 0.5 ? -1 : 1;
-    G.wind = dir * Math.round(rand(8.5, 10) * 10) / 10;
-    G.disaster = { type: 'typhoon', name: '🌪️ 초강력 태풍 경보!', dir };
-    for (const pl of players) {
-      if (pl.alive) {
-        pl.vx += dir * 240;
-        pl.air = true;
-        pl.vy = -120;
-      }
-    }
-    Sfx.airstrike();
-    G.shake = Math.max(G.shake, 14);
-    G.floaters.push({ x: W / 2, y: 200, text: `🌪️ 태풍 발생! 강풍 ${dir > 0 ? '▶' : '◀'} ${Math.abs(G.wind)}`, color: '#80deea', t: 0, life: 2.0 });
-  } else if (roll < 0.30) {
-    // 2) 지진: 맵 곳곳 지형 함몰 + 화면 진동 + 탱크 공중 도약
-    G.disaster = { type: 'earthquake', name: '🌋 대지진 경보!' };
-    for (let k = 0; k < 5; k++) {
-      const qx = rand(180, W - 180);
-      const qy = Terrain.h(qx) + rand(10, 45);
-      Terrain.carve(qx, qy, rand(38, 68));
-      burst(qx, qy - 10, 10, { colors: getDirtColors(), speed: 220, life: 0.8, size: 4, ground: true, kind: 'debris' });
-    }
-    for (const pl of players) {
-      if (pl.alive) {
-        pl.air = true;
-        pl.vy = -rand(180, 260);
-        pl.vx += rand(-90, 90);
-      }
-    }
-    Sfx.explosion(90);
-    G.shake = Math.max(G.shake, 24);
-    G.floaters.push({ x: W / 2, y: 200, text: '🌋 대지진 발생! 지반이 무너집니다!', color: '#ff8a65', t: 0, life: 2.0 });
-  }
 }
 
 function beginTurn(i, forcedWind = null, forcedSeed = null) {
@@ -188,18 +137,10 @@ function beginTurn(i, forcedWind = null, forcedSeed = null) {
   for (const p of players) p.turnDmgTaken = 0;
   const p = players[i];
 
-  if (p.empDebuff) {
-    p.fuel = Math.round(p.stats.maxFuel * 0.2);
-    p.empDebuff = false;
-  } else {
-    p.fuel = p.stats.maxFuel;
-  }
+  if (p.empDebuff) { p.fuel = Math.round(p.stats.maxFuel * 0.2); p.empDebuff = false; }
+  else { p.fuel = p.stats.maxFuel; }
   p.charging = false; p.charge = 0; p.chargeT = 0;
 
-  // 자연재해 판정 (태풍 / 지진)
-  triggerDisaster();
-
-  // 맹독 지대 처리
   for (let idx = G.poisons.length - 1; idx >= 0; idx--) {
     const pz = G.poisons[idx];
     for (const pl of players) {
@@ -415,14 +356,14 @@ function fire(p, fromRemote = false) {
   const a = aimRad(p), st = p.stats;
   const eventRoll = RNG.next();
 
-  if (eventRoll < 0.03) {
-    // [특수 이벤트 1] 3% 확률: 돌발 전술 핵폭탄 (맵 초토화 + 양측 자폭 무승부)
+  if (eventRoll < 0.01) {
+    // [특수 이벤트 1] 1% 확률: 돌발 전술 핵폭탄 (맵 초토화 + 양측 자폭 무승부)
     G.pending.push({ t: 0, owner: p, angle: a, power: pp, isDrawNuke: true });
-    showBanner('☢️ 핵폭탄 경보!', '3% 확률 돌발 핵탄두 장전! 전원 대피!', '#c6ff00', 1.8);
-  } else if (eventRoll < 0.10) {
-    // [특수 이벤트 2] 7% 확률: 불발탄 (자기 기체에서 포탄 즉시 폭발)
+    showBanner('☢️ 핵폭탄 경보!', '1% 확률 돌발 핵탄두 장전! 전원 대피!', '#c6ff00', 1.8);
+  } else if (eventRoll < 0.05) {
+    // [특수 이벤트 2] 4% 확률: 불발탄 (자기 기체에서 포탄 즉시 폭발)
     G.pending.push({ t: 0, owner: p, angle: a, power: pp, isMisfire: true });
-    showBanner('💥 불발탄 발생!', '7% 확률 포신 내부 점화!', '#ff5252', 1.5);
+    showBanner('💥 불발탄 발생!', '4% 확률 포신 내부 점화!', '#ff5252', 1.5);
   } else {
     const totalShots = st.shots + p.bonusShots;
     for (let i = 0; i < totalShots; i++) {
@@ -699,7 +640,7 @@ function computeGuide(p) {
 
 /* ============================ 필드 이펙트 (블랙홀 & UFO) ============================ */
 function spawnBlackhole(x, y, owner, dur, power) {
-  G.fields.push({ type: 'blackhole', x, y, owner, t: 0, life: dur, R: 260, power, rot: 0, acc: [0, 0] });
+  G.fields.push({ type: 'blackhole', x, y, owner, t: 0, life: dur, R: 185, power, rot: 0, acc: [0, 0] });
   Sfx.hum(dur);
 }
 function updateFields(dt) {
@@ -710,12 +651,34 @@ function updateFields(dt) {
       const e = enemyTank(f.owner);
       if (e && Math.abs(e.x - f.x) < f.R) {
         e.air = true;
-        if (f.t < f.life * 0.7) {
-          e.y -= 280 * dt;
+        if (f.t < f.life * 0.68) {
+          // 1단계: 공중 납치 + 레이저 지속 피해 (1중첩 최대 6~7 피해로 제한)
+          e.y = Math.max(150, e.y - 340 * dt);
           e.vy = 0;
-          e.x += (f.x - e.x) * 3 * dt;
+          e.x += (f.x - e.x) * 4.5 * dt;
+          const maxBeam = 6 + (f.power - 1) * 5;
+          if (f.beamTotal < maxBeam) {
+            f.beamAcc += (7 + (f.power - 1) * 4) * dt;
+            if (f.beamAcc >= 3) {
+              const deal = Math.min(Math.round(f.beamAcc), maxBeam - f.beamTotal);
+              if (deal > 0) {
+                damageTank(e, deal, '#ea80fc', f.owner);
+                f.beamTotal += deal;
+              }
+              f.beamAcc = 0;
+            }
+          }
+          P(e.x + fxRand(-18, 18), e.y - 16, fxRand(-40, 40), fxRand(-80, -20), { life: 0.35, size: 3, color: '#ea80fc', grav: 0, kind: 'spark' });
         } else {
-          e.vy = 520;
+          // 2단계: 고속 수직 내리꽂기 + 추락 충격 추가 피해 (1중첩 11 피해 -> 합산 약 17 피해)
+          e.vy = 780;
+          if (!f.slammed) {
+            f.slammed = true;
+            const slamDmg = 11 + (f.power - 1) * 7;
+            damageTank(e, slamDmg, '#ff4081', f.owner);
+            G.floaters.push({ x: e.x, y: e.y - 72, text: '🛸 강제 추락!', color: '#ea80fc', t: 0, life: 1.2 });
+            G.shake = Math.max(G.shake, 14);
+          }
         }
       }
       if (f.t >= f.life) G.fields.splice(i, 1);
@@ -732,8 +695,8 @@ function updateFields(dt) {
         const pull = (70 + 260 * (1 - d / f.R) * f.power) * dt;
         moveTankX(p, Math.sign(dx) * Math.min(pull, Math.abs(dx)));
         if (d < 90) {
-          f.acc[p.id] += f.owner.stats.damage * 0.4 * dt;
-          if (f.acc[p.id] >= 6) { damageTank(p, f.acc[p.id], '#b388ff', f.owner); f.acc[p.id] = 0; }
+          f.acc[p.id] += (12 + (f.power - 1) * 6) * dt;
+          if (f.acc[p.id] >= 5) { damageTank(p, f.acc[p.id], '#b388ff', f.owner); f.acc[p.id] = 0; }
         }
       }
     }
@@ -1089,17 +1052,57 @@ function makeBackground(biomeKey = 'grass') {
   const g = x.createLinearGradient(0, 0, 0, H);
   g.addColorStop(0, b.sky[0]); g.addColorStop(0.35, b.sky[1]); g.addColorStop(0.7, b.sky[2]); g.addColorStop(1, b.sky[3]);
   x.fillStyle = g; x.fillRect(0, 0, W, H);
-  for (let i = 0; i < 200; i++) { x.fillStyle = `rgba(255,255,255,${fxRand(0.2, 0.9)})`; x.fillRect(fxRand(0, W), fxRand(0, H * 0.55), fxRand(1, 2.2), fxRand(1, 2.2)); }
-  const mg = x.createRadialGradient(1300, 190, 4, 1300, 190, 70);
-  mg.addColorStop(0, '#fff8e1'); mg.addColorStop(0.5, 'rgba(255,248,225,0.9)'); mg.addColorStop(1, 'rgba(255,248,225,0)');
-  x.fillStyle = mg; x.beginPath(); x.arc(1300, 190, 70, 0, TAU); x.fill();
-  const layer = (base, amp, col) => {
+
+  if (biomeKey === 'grass') {
+    for (let i = 0; i < 200; i++) { x.fillStyle = `rgba(255,255,255,${fxRand(0.2, 0.9)})`; x.fillRect(fxRand(0, W), fxRand(0, H * 0.55), fxRand(1, 2.2), fxRand(1, 2.2)); }
+    const mg = x.createRadialGradient(1300, 190, 4, 1300, 190, 70);
+    mg.addColorStop(0, '#fff8e1'); mg.addColorStop(0.5, 'rgba(255,248,225,0.9)'); mg.addColorStop(1, 'rgba(255,248,225,0)');
+    x.fillStyle = mg; x.beginPath(); x.arc(1300, 190, 70, 0, TAU); x.fill();
+  } else if (biomeKey === 'desert') {
+    // 작열하는 거대 태양
+    const sg = x.createRadialGradient(320, 210, 10, 320, 210, 150);
+    sg.addColorStop(0, '#fffde7'); sg.addColorStop(0.35, 'rgba(255,224,130,0.95)'); sg.addColorStop(1, 'rgba(255,160,0,0)');
+    x.fillStyle = sg; x.beginPath(); x.arc(320, 210, 150, 0, TAU); x.fill();
+    // 원경 피라미드 실루엣
+    const pyr = (px, py, pw, ph, col) => {
+      x.fillStyle = col; x.beginPath(); x.moveTo(px - pw / 2, py); x.lineTo(px, py - ph); x.lineTo(px + pw / 2, py); x.closePath(); x.fill();
+    };
+    pyr(460, H * 0.65, 260, 165, 'rgba(92,32,6,0.65)');
+    pyr(630, H * 0.66, 180, 115, 'rgba(70,22,4,0.75)');
+    pyr(1180, H * 0.65, 220, 140, 'rgba(92,32,6,0.6)');
+  } else if (biomeKey === 'tundra') {
+    // 밤하늘 별빛 + 오로라 커튼
+    for (let i = 0; i < 180; i++) { x.fillStyle = `rgba(220,245,255,${fxRand(0.3, 0.95)})`; x.fillRect(fxRand(0, W), fxRand(0, H * 0.5), fxRand(1, 2.4), fxRand(1, 2.4)); }
+    const ag = x.createLinearGradient(0, 110, 0, 340);
+    ag.addColorStop(0, 'rgba(0,255,180,0)'); ag.addColorStop(0.5, 'rgba(100,255,218,0.24)'); ag.addColorStop(1, 'rgba(64,196,255,0)');
+    x.fillStyle = ag;
+    x.beginPath(); x.moveTo(0, 240);
+    for (let i = 0; i <= W; i += 20) x.lineTo(i, 210 + 45 * Math.sin(i / 180) + 25 * Math.cos(i / 75));
+    x.lineTo(W, 340); x.lineTo(0, 340); x.closePath(); x.fill();
+  } else if (biomeKey === 'swamp') {
+    // 늪지대 거대 독안개 보름달 + 반딧불이
+    const mg = x.createRadialGradient(1220, 200, 8, 1220, 200, 115);
+    mg.addColorStop(0, '#f1f8e9'); mg.addColorStop(0.45, 'rgba(197,225,165,0.85)'); mg.addColorStop(1, 'rgba(139,195,74,0)');
+    x.fillStyle = mg; x.beginPath(); x.arc(1220, 200, 115, 0, TAU); x.fill();
+    for (let i = 0; i < 65; i++) {
+      x.fillStyle = `rgba(178,255,89,${fxRand(0.25, 0.85)})`;
+      x.beginPath(); x.arc(fxRand(0, W), fxRand(220, H * 0.72), fxRand(1.5, 3.2), 0, TAU); x.fill();
+    }
+  }
+
+  const layer = (base, amp, col, sharp = false) => {
     x.fillStyle = col; x.beginPath(); x.moveTo(0, H);
     const ph = fxRand(0, 9);
-    for (let i = 0; i <= W; i += 8) x.lineTo(i, base + amp * Math.sin(i / 150 + ph) + amp * 0.5 * Math.sin(i / 53 + ph * 2));
+    for (let i = 0; i <= W; i += 8) {
+      const wave = sharp
+        ? Math.abs(Math.sin(i / 130 + ph)) * amp * 1.4 + Math.abs(Math.cos(i / 48 + ph)) * amp * 0.5
+        : amp * Math.sin(i / 150 + ph) + amp * 0.5 * Math.sin(i / 53 + ph * 2);
+      x.lineTo(i, base + (sharp ? -wave : wave));
+    }
     x.lineTo(W, H); x.closePath(); x.fill();
   };
-  layer(H * 0.6, 46, b.mtn[0]); layer(H * 0.68, 34, b.mtn[1]);
+  layer(H * 0.62, 46, b.mtn[0], biomeKey === 'tundra');
+  layer(H * 0.70, 34, b.mtn[1], biomeKey === 'tundra');
   return c;
 }
 let BG = null;
@@ -1348,6 +1351,21 @@ function drawShell(s) {
 
 function drawWorld() {
   ctx.drawImage(BG, 0, 0);
+  // 지역별 대기 파티클 연출 (눈송이 / 모래바람 / 독포자)
+  if (G.biome === 'tundra') {
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    for (let i = 0; i < 45; i++) {
+      const sx = ((i * 197 + G.time * (35 + G.wind * 12)) % (W + 40) + (W + 40)) % (W + 40) - 20;
+      const sy = (i * 131 + G.time * (48 + (i % 5) * 9)) % (H - 80);
+      ctx.beginPath(); ctx.arc(sx, sy, 2 + (i % 3), 0, TAU); ctx.fill();
+    }
+  } else if (G.biome === 'desert') {
+    ctx.fillStyle = 'rgba(255,213,128,0.12)';
+    ctx.fillRect(0, 115, W, H - 115);
+  } else if (G.biome === 'swamp') {
+    ctx.fillStyle = 'rgba(118,255,3,0.08)';
+    ctx.fillRect(0, H * 0.55, W, H * 0.45);
+  }
   ctx.strokeStyle = 'rgba(255,255,255,0.13)'; ctx.lineWidth = 1.5;
   ctx.beginPath();
   for (const s of G.streaks) { ctx.moveTo(s.x, s.y); ctx.lineTo(s.x + Math.sign(G.wind || 1) * s.l, s.y); }
@@ -1507,7 +1525,7 @@ function drawCards() {
   ctx.font = `900 44px ${FONT}`; ctx.fillStyle = loser.color;
   ctx.fillText(isMyPick ? `${loser.name} 카드를 고르세요!` : `${loser.name}님이 카드를 고르는 중...`, W / 2, 100);
   ctx.font = `18px ${FONT}`; ctx.fillStyle = '#b8bcd8';
-  ctx.fillText('패배한 플레이어가 대환장 카드 1장을 선택합니다 · 효과는 다음 라운드에도 영구 누적됩니다', W / 2, 138);
+  ctx.fillText('패배한 플레이어가 대환장 카드 1장을 선택합니다 · 중첩할수록 효과가 극적으로 진화합니다!', W / 2, 138);
   const cw = 360, ch = 520, gap = 50, x0 = W / 2 - (cw * 3 + gap * 2) / 2, cy0 = 175;
   for (let i = 0; i < 3; i++) {
     const id = G.choices[i], d = CARD_DEFS[id];
@@ -1526,11 +1544,14 @@ function drawCards() {
     ctx.fillText(d.cat + (d.curse ? '  ⚠ 하이리스크' : ''), -cw / 2 + 24, -ch / 2 + 34);
     ctx.textAlign = 'center';
     ctx.font = `104px ${FONT}`; ctx.fillStyle = '#fff'; ctx.fillText(d.icon, 0, -ch / 2 + 150);
-    ctx.font = `bold 32px ${FONT}`; ctx.fillText(d.name, 0, -ch / 2 + 258);
-    ctx.font = `20px ${FONT}`; ctx.fillStyle = '#cfd3f2';
-    d.desc.forEach((line, k) => ctx.fillText(line, 0, -ch / 2 + 312 + k * 32));
-    ctx.font = `15px ${FONT}`; ctx.fillStyle = have ? '#ffd54f' : '#7f84a8';
-    ctx.fillText(have ? `보유 ×${have}  →  ×${have + 1} 중첩` : '새 카드', 0, ch / 2 - 70);
+    ctx.font = `bold 32px ${FONT}`; ctx.fillText(d.name, 0, -ch / 2 + 252);
+    ctx.font = `18px ${FONT}`; ctx.fillStyle = '#cfd3f2';
+    d.desc.forEach((line, k) => {
+      ctx.fillStyle = k === 1 ? '#ffd54f' : '#cfd3f2';
+      ctx.fillText(line, 0, -ch / 2 + 306 + k * 34);
+    });
+    ctx.font = `bold 16px ${FONT}`; ctx.fillStyle = have ? '#69f0ae' : '#7f84a8';
+    ctx.fillText(have ? `⚡ Lv.${have} → Lv.${have + 1} 극적 진화!` : '✨ 신규 획득', 0, ch / 2 - 70);
     ctx.fillStyle = sel ? d.color : 'rgba(255,255,255,0.12)'; ctx.beginPath(); ctx.arc(0, ch / 2 - 32, 19, 0, TAU); ctx.fill();
     ctx.font = `bold 20px ${FONT}`; ctx.fillStyle = sel ? '#111' : '#aab'; ctx.fillText(String(i + 1), 0, ch / 2 - 25);
     ctx.restore();
@@ -1545,10 +1566,7 @@ function drawTitle() {
   ctx.font = `900 80px ${FONT}`; ctx.lineWidth = 9; ctx.strokeStyle = '#000';
   ctx.strokeText('탱크 라운즈 v4', W / 2, 210); ctx.fillStyle = '#ffd54f'; ctx.fillText('탱크 라운즈 v4', W / 2, 210);
   ctx.font = `22px ${FONT}`; ctx.fillStyle = '#c8cbe8';
-  ctx.fillText('24종의 대환장 난장판 카드 · 1R(50) → 2R(90) → 3R(120) 초고속 전개!', W / 2, 260);
-
-  const modeBox = (x, idx, title, color, lines) => {
-    const isHov = hoverTitleBtn === idx;
+  ctx.fillText('30종의 대환장 난장판 카드 · 중첩 진화 시스템 · 1R(50) → 2R(90) → 3R(120)!', W / 2, 260);
     ctx.save();
     if (isHov) {
       ctx.translate(x + 205, 440);
