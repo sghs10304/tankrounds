@@ -22,10 +22,7 @@ const ctx = canvas.getContext('2d');
 const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 
-/* ============================ 2. 결정론적 시드 난수 (RNG) ============================
- * 온라인 대전 시 Host와 Guest가 동일한 턴 시드를 공유하여
- * 산탄 퍼짐, 룰렛 배율, 유성우, 보급 상자 등이 100% 동일하게 발생하도록 보장합니다.
- */
+/* ============================ 2. 결정론적 시드 난수 (RNG) ============================ */
 const RNG = {
   seed: 123456789,
   setSeed(s) {
@@ -39,9 +36,7 @@ const RNG = {
   }
 };
 
-// 게임 로직용 시드 기반 난수 (동기화 필수 요소에 사용)
 const rand = (a, b) => a + RNG.next() * (b - a);
-// 순수 시각/파티클 연출용 비동기 난수 (게임 판정에 영향 없음)
 const fxRand = (a, b) => a + Math.random() * (b - a);
 
 function rr(x, y, w, h, r) {
@@ -143,6 +138,7 @@ const Sfx = (() => {
     phoenix() { [440, 554, 659, 880, 1108].forEach((f, i) => tone({ type: 'sawtooth', f0: f, dur: 0.3, vol: 0.2, delay: i * 0.05 })); },
     lightning() { noise({ dur: 0.25, vol: 0.6, f0: 3200, f1: 300, type: 'highpass' }); tone({ type: 'sawtooth', f0: 1200, f1: 120, dur: 0.2, vol: 0.3 }); },
     ufo() { tone({ type: 'sine', f0: 440, f1: 880, dur: 0.4, vol: 0.2 }); tone({ type: 'sine', f0: 880, f1: 440, dur: 0.4, vol: 0.2, delay: 0.4 }); },
+    synergy() { [587, 740, 880, 1175].forEach((f, i) => tone({ type: 'triangle', f0: f, dur: 0.3, vol: 0.22, delay: i * 0.06 })); },
     hum(dur) {
       if (!ok()) return;
       const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
@@ -154,19 +150,6 @@ const Sfx = (() => {
 })();
 
 /* ============================ 4. 지형 엔진 ============================ */
-function makeDirtTexture() {
-  const c = document.createElement('canvas'); c.width = W; c.height = H;
-  const x = c.getContext('2d');
-  const g = x.createLinearGradient(0, 300, 0, H);
-  g.addColorStop(0, '#93683c'); g.addColorStop(0.45, '#5d3d22'); g.addColorStop(1, '#2b1a0e');
-  x.fillStyle = g; x.fillRect(0, 0, W, H);
-  for (let i = 0; i < 3000; i++) {
-    x.fillStyle = Math.random() < 0.5 ? 'rgba(0,0,0,0.14)' : 'rgba(255,214,150,0.08)';
-    x.fillRect(fxRand(0, W), fxRand(300, H), fxRand(2, 5), fxRand(2, 5));
-  }
-  return c;
-}
-
 const BIOME_DEFS = {
   grass: {
     name: '초원 평원', icon: '🌿',
@@ -235,7 +218,7 @@ const Terrain = {
     this.dirt = makeBiomeDirt(this.biome);
     this.dirtPat = this.c.createPattern(this.dirt, 'no-repeat');
   },
-  generate(x1, x2) {
+  generate(spawnXs) {
     const amps = [88, 46, 24, 11], wls = [1250, 560, 260, 105];
     const waves = amps.map((a, i) => ({ a: a * rand(0.7, 1.2), wl: wls[i] * rand(0.85, 1.2), ph: rand(0, TAU) }));
     const hill = rand(10, 115), base = H * 0.67;
@@ -245,8 +228,8 @@ const Terrain = {
       y -= hill * Math.exp(-Math.pow((x - W / 2) / 200, 2));
       this.top[x] = clamp(y, 330, H - BEDROCK - 90);
     }
-    for (const cx of [x1, x2]) {
-      const h0 = this.top[Math.round(cx)], half = 38, taper = 42;
+    for (const cx of spawnXs) {
+      const h0 = this.top[Math.round(cx)], half = 34, taper = 38;
       for (let dx = -half - taper; dx <= half + taper; dx++) {
         const x = Math.round(cx) + dx; if (x < 0 || x >= W) continue;
         const ad = Math.abs(dx), w = ad <= half ? 1 : 1 - (ad - half) / taper, s = w * w * (3 - 2 * w);
