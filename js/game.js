@@ -153,7 +153,6 @@ function beginTurn(i, forcedWind = null, forcedSeed = null) {
     if (pz.turnsLeft <= 0) G.poisons.splice(idx, 1);
   }
 
-  // 지뢰 수명 감소
   for (let idx = G.mines.length - 1; idx >= 0; idx--) {
     G.mines[idx].life--;
     if (G.mines[idx].life <= 0) G.mines.splice(idx, 1);
@@ -328,7 +327,6 @@ function fire(p, fromRemote = false) {
   p.charging = false; p.charge = 0; p.chargeT = 0;
   Sfx.chargeStop();
 
-  // 소수점 정밀 좌표 및 발사 전용 시드 생성
   const px = Math.round(p.x * 100) / 100;
   const py = Math.round(p.y * 100) / 100;
   const pa = Math.round(p.angle * 100) / 100;
@@ -380,7 +378,6 @@ function fire(p, fromRemote = false) {
 function spawnShell(owner, angle, power, opts = {}) {
   const st = owner.stats, m = muzzlePos(owner, angle);
   if (opts.isMisfire) {
-    // 불발탄: 발사 즉시 자기 탱크 위치에서 폭발
     Sfx.pop();
     G.floaters.push({ x: owner.x, y: owner.y - 68, text: '💥 불발탄 자폭!', color: '#ff5252', t: 0, life: 1.4 });
     explode({ x: owner.x, y: owner.y - 16 * st.tankScale, radius: st.blastRadius * 1.15, damage: Math.max(24, st.damage * 0.9) }, owner);
@@ -545,7 +542,6 @@ function stepDrill(s, dt) {
 function detonate(s, hit) {
   const owner = s.owner;
   if (s.isDrawNuke) {
-    // 1% 돌발 핵폭탄 착탄: 맵 전체 초토화 후 양 플레이어 동시 사망 -> 무승부 처리
     Terrain.carve(s.x, s.y, 520);
     blastFX(s.x, s.y, 260, false);
     G.screenFlash = 1.0;
@@ -652,7 +648,6 @@ function updateFields(dt) {
       if (e && Math.abs(e.x - f.x) < f.R) {
         e.air = true;
         if (f.t < f.life * 0.68) {
-          // 1단계: 공중 납치 + 레이저 지속 피해 (1중첩 최대 6~7 피해로 제한)
           e.y = Math.max(150, e.y - 340 * dt);
           e.vy = 0;
           e.x += (f.x - e.x) * 4.5 * dt;
@@ -670,7 +665,6 @@ function updateFields(dt) {
           }
           P(e.x + fxRand(-18, 18), e.y - 16, fxRand(-40, 40), fxRand(-80, -20), { life: 0.35, size: 3, color: '#ea80fc', grav: 0, kind: 'spark' });
         } else {
-          // 2단계: 고속 수직 내리꽂기 + 추락 충격 추가 피해 (1중첩 11 피해 -> 합산 약 17 피해)
           e.vy = 780;
           if (!f.slammed) {
             f.slammed = true;
@@ -916,7 +910,6 @@ function updateActivePlayer(dt) {
 }
 
 function finishResolve() {
-  // 온라인 모드에서는 Host의 계산 결과를 정답(Source of Truth)으로 확정
   if (Net.active && !Net.isHost) return;
 
   if (players.some(p => p.hp <= 0)) {
@@ -954,7 +947,6 @@ function finishResolve() {
 function endRound() {
   const [a, b] = players;
   if (a.hp <= 0 && b.hp <= 0) {
-    // 핵폭탄 등으로 양쪽 모두 사망 시 무승부 처리 (점수 변동 없음, 다음 라운드 재시작)
     G.winner = -1;
     showBanner('⚖️ ROUND DRAW!', `무승부! 현재 스코어 ${players[0].score} : ${players[1].score}`, '#c6ff00', 2.2);
     setState('roundEnd');
@@ -1059,11 +1051,9 @@ function makeBackground(biomeKey = 'grass') {
     mg.addColorStop(0, '#fff8e1'); mg.addColorStop(0.5, 'rgba(255,248,225,0.9)'); mg.addColorStop(1, 'rgba(255,248,225,0)');
     x.fillStyle = mg; x.beginPath(); x.arc(1300, 190, 70, 0, TAU); x.fill();
   } else if (biomeKey === 'desert') {
-    // 작열하는 거대 태양
     const sg = x.createRadialGradient(320, 210, 10, 320, 210, 150);
     sg.addColorStop(0, '#fffde7'); sg.addColorStop(0.35, 'rgba(255,224,130,0.95)'); sg.addColorStop(1, 'rgba(255,160,0,0)');
     x.fillStyle = sg; x.beginPath(); x.arc(320, 210, 150, 0, TAU); x.fill();
-    // 원경 피라미드 실루엣
     const pyr = (px, py, pw, ph, col) => {
       x.fillStyle = col; x.beginPath(); x.moveTo(px - pw / 2, py); x.lineTo(px, py - ph); x.lineTo(px + pw / 2, py); x.closePath(); x.fill();
     };
@@ -1071,7 +1061,6 @@ function makeBackground(biomeKey = 'grass') {
     pyr(630, H * 0.66, 180, 115, 'rgba(70,22,4,0.75)');
     pyr(1180, H * 0.65, 220, 140, 'rgba(92,32,6,0.6)');
   } else if (biomeKey === 'tundra') {
-    // 밤하늘 별빛 + 오로라 커튼
     for (let i = 0; i < 180; i++) { x.fillStyle = `rgba(220,245,255,${fxRand(0.3, 0.95)})`; x.fillRect(fxRand(0, W), fxRand(0, H * 0.5), fxRand(1, 2.4), fxRand(1, 2.4)); }
     const ag = x.createLinearGradient(0, 110, 0, 340);
     ag.addColorStop(0, 'rgba(0,255,180,0)'); ag.addColorStop(0.5, 'rgba(100,255,218,0.24)'); ag.addColorStop(1, 'rgba(64,196,255,0)');
@@ -1080,7 +1069,6 @@ function makeBackground(biomeKey = 'grass') {
     for (let i = 0; i <= W; i += 20) x.lineTo(i, 210 + 45 * Math.sin(i / 180) + 25 * Math.cos(i / 75));
     x.lineTo(W, 340); x.lineTo(0, 340); x.closePath(); x.fill();
   } else if (biomeKey === 'swamp') {
-    // 늪지대 거대 독안개 보름달 + 반딧불이
     const mg = x.createRadialGradient(1220, 200, 8, 1220, 200, 115);
     mg.addColorStop(0, '#f1f8e9'); mg.addColorStop(0.45, 'rgba(197,225,165,0.85)'); mg.addColorStop(1, 'rgba(139,195,74,0)');
     x.fillStyle = mg; x.beginPath(); x.arc(1220, 200, 115, 0, TAU); x.fill();
@@ -1351,7 +1339,6 @@ function drawShell(s) {
 
 function drawWorld() {
   ctx.drawImage(BG, 0, 0);
-  // 지역별 대기 파티클 연출 (눈송이 / 모래바람 / 독포자)
   if (G.biome === 'tundra') {
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     for (let i = 0; i < 45; i++) {
