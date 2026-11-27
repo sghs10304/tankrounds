@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>탱크 라운즈 v4 - 대환장 난장판 에디션</title>
+<title>탱크 라운즈 v5 - 대환장 난장판 완전판</title>
 <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#05060d;overflow:hidden;font-family:'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif}
@@ -27,14 +27,6 @@
 </head>
 <body>
 <canvas id="game" width="1600" height="900" tabindex="0"></canvas>
-<div id="err-box" style="display:none;position:fixed;inset:20px;background:rgba(15,0,0,0.94);border:2px solid #ff5252;color:#ff8a80;padding:24px;border-radius:16px;font-family:monospace;font-size:16px;z-index:9999;white-space:pre-wrap;overflow:auto"></div>
-<script>
-window.addEventListener('error', function(e) {
-  const b = document.getElementById('err-box');
-  b.style.display = 'block';
-  b.textContent += '[스크립트 오류 발생]\n메시지: ' + e.message + '\n파일: ' + (e.filename || '알 수 없음') + ' (' + e.lineno + '번째 줄)\n\n';
-});
-</script>
 
 <!-- 온라인 멀티플레이 연결 모달 -->
 <div id="p2p-modal">
