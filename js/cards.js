@@ -24,6 +24,8 @@ function newStats() {
     synergies: [],
     synStorm: false, synApocalypse: false, synSupernova: false, synRailgun: false,
     synVampire: false, synGatling: false, synTimeFreeze: false, synVoid: false,
+    synFortress: false, synRam: false, synNitro: false, synTyphoon: false,
+    armor: 0, repair: 0, knockback: 0,
     hooks: { onFire: [], onUpdate: [], onApex: [], onImpact: [], onDetonate: [], onExplode: [], onTurnStart: [] },
   };
 }
@@ -88,7 +90,7 @@ const SYNERGY_DEFS = [
     apply(s) { s.synGatling = true; s.shots += 3; s.shotDelay = 0.03; }
   },
   {
-    id: 'timefreeze', req: ['frost', 'emp'], icon: '🧊', name: '절대영도 빙하기', color: '#81d4fa',
+    id: 'timefreeze', req: ['frost', 'sawblade'], icon: '🧊', name: '절대영도 빙하기', color: '#81d4fa',
     desc: '빙결 적중 시 적의 다음 턴 이동 연료 100% 동결!',
     apply(s) { s.synTimeFreeze = true; }
   },
@@ -96,6 +98,26 @@ const SYNERGY_DEFS = [
     id: 'void', req: ['wormhole', 'mirror'], icon: '🌀', name: '차원 균열', color: '#ea80fc',
     desc: '거울 분신탄까지 모두 적 머리 위 웜홀로 낙하!',
     apply(s) { s.synVoid = true; }
+  },
+  {
+    id: 'fortress', req: ['armor', 'repair'], icon: '🏰', name: '이동 요새', color: '#90caf9',
+    desc: '받는 피해 추가 감소 & 수리량 2배!',
+    apply(s) { s.synFortress = true; }
+  },
+  {
+    id: 'ram', req: ['heavy', 'knockback'], icon: '🐏', name: '공성 파쇄추', color: '#ffab91',
+    desc: '충격파 밀치기 ×1.7 & 공격력 +15%!',
+    apply(s) { s.synRam = true; s.damage *= 1.15; }
+  },
+  {
+    id: 'nitro', req: ['engine', 'bouncer'], icon: '🚀', name: '니트로 핀볼', color: '#ffea00',
+    desc: '바운스 +2회 & 이동 연료 +30%!',
+    apply(s) { s.synNitro = true; s.bounces += 2; s.maxFuel = Math.round(s.maxFuel * 1.3); }
+  },
+  {
+    id: 'typhoon', req: ['knockback', 'twister'], icon: '🌀', name: '태풍의 눈', color: '#a7ffeb',
+    desc: '충격파 범위 ×1.6!',
+    apply(s) { s.synTyphoon = true; }
   }
 ];
 
@@ -395,6 +417,29 @@ function hookSawblade(s, hit, owner) {
   return true;
 }
 
+function hookRepair(p) {
+  const rate = 0.07 * p.stats.repair * (p.stats.synFortress ? 2 : 1);
+  const heal = Math.min(p.roundMaxHp - p.hp, Math.round(p.roundMaxHp * rate));
+  if (heal <= 0) return;
+  p.hp += heal;
+  G.floaters.push({ x: p.x, y: p.y - 70, text: `🔧 +${heal}`, color: '#69f0ae', t: 0, life: 1.2 });
+}
+function hookKnockback(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const st = owner.stats, lv = st.knockback;
+  const range = ctx_.radius * 2.2 * (st.synTyphoon ? 1.6 : 1);
+  const force = (230 + lv * 90) * (st.synRam ? 1.7 : 1);
+  for (const e of hostileTanks(owner)) {
+    if (Math.hypot(e.x - ctx_.x, (e.y - 15) - ctx_.y) >= range) continue;
+    const dir = e.x >= ctx_.x ? 1 : -1;
+    e.air = true;
+    e.vx += dir * force;
+    e.vy = -force * 0.75;
+    damageTank(e, 4 + lv * 4, '#ffab91', owner);
+  }
+  G.rings.push({ x: ctx_.x, y: ctx_.y, max: range, t: 0, life: 0.4, color: '255,171,145' });
+}
+
 const CARD_DEFS = {
   cluster: {
     icon: '🎆', name: '공중 분열탄', short: '분열', cat: '탄환 변형', color: '#f06292',
@@ -546,6 +591,31 @@ const CARD_DEFS = {
     desc: ['땅에 닿으면 지형을 깎으며 돌진하는 톱날 변신', '★중첩: 톱날 질주 시간과 절단 위력 대폭 증가'],
     apply(s) { s.sawblade += 1; addHook(s, 'onImpact', hookSawblade); }
   },
+  armor: {
+    icon: '🛡️', name: '강화 장갑', short: '장갑', cat: '기본 강화', color: '#90a4ae',
+    desc: ['적에게 받는 피해 18% 감소', '★시너지(수리): 이동 요새 각성'],
+    apply(s) { s.armor += 1; }
+  },
+  engine: {
+    icon: '🛞', name: '터보 엔진', short: '엔진', cat: '기본 강화', color: '#ffee58',
+    desc: ['이동 연료 ×1.5 증가', '★시너지(탱탱볼): 니트로 핀볼 각성'],
+    apply(s) { s.maxFuel = Math.round(s.maxFuel * 1.5); }
+  },
+  repair: {
+    icon: '🔧', name: '야전 수리', short: '수리', cat: '기본 강화', color: '#69f0ae',
+    desc: ['내 턴 시작마다 체력 7% 회복', '★시너지(장갑): 이동 요새 각성'],
+    apply(s) { s.repair += 1; addHook(s, 'onTurnStart', hookRepair); }
+  },
+  heavy: {
+    icon: '🪨', name: '묵직한 철갑탄', short: '철갑', cat: '기본 강화', color: '#bcaaa4',
+    desc: ['공격력 ×1.25 & 포탄 크기 증가', '★시너지(충격파): 공성 파쇄추 각성'],
+    apply(s) { s.damage *= 1.25; s.shellSize *= 1.15; }
+  },
+  knockback: {
+    icon: '👊', name: '충격파탄', short: '충격파', cat: '기본 강화', color: '#ff8a65',
+    desc: ['착탄 시 주변 적을 밀쳐내고 추가 피해', '★시너지(철갑·회오리): 융합 2종 가능'],
+    apply(s) { s.knockback += 1; addHook(s, 'onExplode', hookKnockback); }
+  },
 };
 
 const CARD_POOL = Object.keys(CARD_DEFS);
@@ -556,7 +626,6 @@ function computeStats(cardIds) {
 
   // 시너지 판정 및 적용
   const set = new Set(ids);
-  if (set.has('frost') && set.has('sawblade')) s.synTimeFreeze = true; // 빙결+톱날 조합 지원
   for (const syn of SYNERGY_DEFS) {
     if (syn.req.every(r => set.has(r))) {
       s.synergies.push(syn);

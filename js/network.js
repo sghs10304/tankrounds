@@ -9,12 +9,17 @@ const BROKER_URLS = [
   'wss://broker.emqx.io:8084/mqtt',
   'wss://broker.hivemq.com:8884/mqtt'
 ];
-const TOPIC_PREFIX = 'tankrounds/v4/room/';
+const TOPIC_PREFIX = 'tankrounds/v5/room/';
 
 const Net = {
   active: false,
   isHost: true,
-  myId: 0, // Host = 0 (P1), Guest = 1 (P2)
+  myId: 0, // Host = 0 (P1), 참가자 = 1~3 (P2~P4)
+  mode: '1v1',
+  peers: {}, // 호스트: clientId -> { id, seen } / 참가자: 미사용
+  hostId: null,
+  welcomed: false,
+  helloTimer: null,
   client: null,
   brokerIdx: 0,
   clientId: 'tr_' + Math.random().toString(36).slice(2, 10),
@@ -27,11 +32,19 @@ const Net = {
   pingTimer: null,
   lastPong: 0,
   fireSeq: 0,
-  lastHandledFireSeq: -1,
+  lastHandledFireSeq: {}, // 플레이어별 발사 순번
   pendingFireAck: null,
   remoteTarget: null,
 
+  playerCount() { return this.mode === '1v1' ? 2 : 4; },
+
   cleanup() {
+    // 로비·게임 중에 나가면 상대에게 알림
+    if (this.welcomed || (this.isHost && Object.keys(this.peers).length)) this.send({ type: '_leave' }, 1);
+    if (this.helloTimer) { clearInterval(this.helloTimer); this.helloTimer = null; }
+    this.peers = {};
+    this.hostId = null;
+    this.welcomed = false;
     if (this.connectTimeout) { clearTimeout(this.connectTimeout); this.connectTimeout = null; }
     if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
     if (this.pendingFireAck) { clearInterval(this.pendingFireAck); this.pendingFireAck = null; }
@@ -40,11 +53,11 @@ const Net = {
     this.lastAimSent = '';
     this.remoteTarget = null;
     this.fireSeq = 0;
-    this.lastHandledFireSeq = -1;
+    this.lastHandledFireSeq = {};
     const joinBtn = document.getElementById('btn-join-room');
     if (joinBtn) joinBtn.disabled = false;
     if (this.client) {
-      try { this.client.end(true); } catch (e) {}
+      try { this.client.end(false); } catch (e) {}
       this.client = null;
     }
   },
@@ -103,6 +116,7 @@ const Net = {
     this.topic = TOPIC_PREFIX + code;
     this.isHost = true;
     this.myId = 0;
+    highlightModeButtons();
 
     codeBox.textContent = '연결 중...';
     status.style.color = '#ffd54f';
@@ -117,8 +131,8 @@ const Net = {
           return;
         }
         codeBox.textContent = code;
-        status.style.color = '#69f0ae';
-        status.textContent = '준비 완료! 상대방의 입장을 기다리고 있습니다...';
+        this.startHeartbeat();
+        this.updateLobby();
       });
     });
   },
@@ -141,6 +155,9 @@ const Net = {
     status.textContent = `[${code}] 방에 입장 신호 전송 중...`;
 
     this.ensureBroker(() => {
+      if (this.isHost && Object.keys(this.peers).length) this.send({ type: '_leave' }, 1);
+      this.peers = {};
+      if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
       if (this.topic && this.topic !== TOPIC_PREFIX + code) {
         try { this.client.unsubscribe(this.topic); } catch (e) {}
       }
@@ -158,10 +175,13 @@ const Net = {
           return;
         }
         this.send({ type: '_hello' }, 1);
+        if (this.helloTimer) clearInterval(this.helloTimer);
+        this.helloTimer = setInterval(() => { if (!this.welcomed) this.send({ type: '_hello' }, 1); }, 1500);
       });
 
       this.connectTimeout = setTimeout(() => {
-        if (!this.active) {
+        if (!this.active && !this.welcomed) {
+          if (this.helloTimer) { clearInterval(this.helloTimer); this.helloTimer = null; }
           this.joining = false;
           joinBtn.disabled = false;
           status.style.color = '#ff5252';
@@ -177,16 +197,82 @@ const Net = {
     canvas.focus();
   },
 
+  setMode(mode) {
+    if (!this.isHost || this.active || this.welcomed) return;
+    this.mode = mode;
+    // 줄어든 정원을 넘는 참가자는 내보냄
+    for (const [cid, peer] of Object.entries(this.peers)) {
+      if (peer.id >= this.playerCount()) {
+        delete this.peers[cid];
+        this.send({ type: '_full', to: cid }, 1);
+      }
+    }
+    highlightModeButtons();
+    if (this.client && this.client.connected && document.getElementById('my-room-code').textContent.length === 4) this.checkStart();
+  },
+
+  updateLobby() {
+    const joined = Object.keys(this.peers).length + 1;
+    const text = `대기실 ${joined} / ${this.playerCount()}명 (${MODE_LABELS[this.mode]})`;
+    const status = document.getElementById('p2p-status');
+    status.style.color = '#69f0ae';
+    status.textContent = text + ' · 인원이 차면 자동 시작';
+    this.send({ type: '_lobby', mode: this.mode, joined }, 1);
+  },
+
+  checkStart() {
+    this.updateLobby();
+    if (Object.keys(this.peers).length + 1 < this.playerCount()) return;
+    this.active = true;
+    const now = performance.now();
+    for (const peer of Object.values(this.peers)) peer.seen = now;
+    this.send({ type: '_start', mode: this.mode }, 1);
+    document.getElementById('p2p-modal').style.display = 'none';
+    canvas.focus();
+    startMatch(this.mode);
+  },
+
+  abort(reason) {
+    this.cleanup();
+    document.getElementById('p2p-modal').style.display = 'none';
+    showBanner('연결 끊김', reason, '#ff5252', 3.0);
+    setState('title');
+    canvas.focus();
+  },
+
+  // 로비 또는 게임 중 한 명이 나갔을 때
+  dropPeer(cid) {
+    const peer = this.peers[cid];
+    if (!peer) return;
+    delete this.peers[cid];
+    if (this.active) {
+      this.send({ type: '_abort', reason: `P${peer.id + 1} 연결이 종료되었습니다` }, 1);
+      this.abort(`P${peer.id + 1} 연결이 종료되었습니다`);
+    } else {
+      this.updateLobby();
+    }
+  },
+
+  hostLost() {
+    if (this.active) { this.abort('방장과의 연결이 종료되었습니다'); return; }
+    this.cleanup();
+    const status = document.getElementById('p2p-status');
+    status.style.color = '#ff5252';
+    status.textContent = '방장이 나갔습니다. 창을 닫고 다시 시도하세요.';
+  },
+
   startHeartbeat() {
     this.lastPong = performance.now();
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = setInterval(() => {
-      if (!this.active) return;
       this.send({ type: '_ping' }, 0);
-      if (performance.now() - this.lastPong > 18000) {
-        this.cleanup();
-        showBanner('연결 끊김', '상대방과의 연결이 종료되었습니다', '#ff5252', 3.0);
-        setState('title');
+      const now = performance.now();
+      if (this.isHost) {
+        for (const [cid, peer] of Object.entries(this.peers)) {
+          if (now - peer.seen > 18000) this.dropPeer(cid);
+        }
+      } else if (this.welcomed && now - this.lastPong > 18000) {
+        this.hostLost();
       }
     }, 4000);
   },
@@ -216,44 +302,87 @@ const Net = {
 
   onData(msg) {
     if (!msg || !msg.type) return;
-    this.lastPong = performance.now();
 
-    if (msg.type === '_ping') {
-      this.send({ type: '_pong' }, 0);
-      return;
+    if (this.isHost) {
+      const peer = this.peers[msg.sender];
+      if (msg.type === '_hello') {
+        if (peer) { // 환영 메시지 유실 시 재전송
+          this.send({ type: '_welcome', to: msg.sender, id: peer.id, mode: this.mode }, 1);
+          return;
+        }
+        const used = new Set(Object.values(this.peers).map(p => p.id));
+        let id = 1;
+        while (used.has(id)) id++;
+        if (this.active || id >= this.playerCount()) {
+          this.send({ type: '_full', to: msg.sender }, 1);
+          return;
+        }
+        this.peers[msg.sender] = { id, seen: performance.now() };
+        this.send({ type: '_welcome', to: msg.sender, id, mode: this.mode }, 1);
+        this.checkStart();
+        return;
+      }
+      if (!peer) return; // 방에 없는 클라이언트의 메시지는 무시
+      peer.seen = performance.now();
+      if (msg.type === '_leave') { this.dropPeer(msg.sender); return; }
+    } else {
+      if (msg.type === '_welcome') {
+        if (msg.to !== this.clientId || !this.joining) return;
+        if (this.connectTimeout) { clearTimeout(this.connectTimeout); this.connectTimeout = null; }
+        if (this.helloTimer) { clearInterval(this.helloTimer); this.helloTimer = null; }
+        this.joining = false;
+        this.welcomed = true;
+        this.hostId = msg.sender;
+        this.myId = msg.id;
+        this.mode = msg.mode;
+        highlightModeButtons();
+        const status = document.getElementById('p2p-status');
+        status.style.color = '#69f0ae';
+        status.textContent = `입장 완료! 당신은 P${msg.id + 1} · 시작을 기다리는 중...`;
+        this.startHeartbeat();
+        return;
+      }
+      if (msg.type === '_full') {
+        if (msg.to !== this.clientId) return;
+        this.welcomed = false;
+        this.cleanup();
+        const status = document.getElementById('p2p-status');
+        status.style.color = '#ff5252';
+        status.textContent = '방이 가득 찼거나 이미 시작했습니다.';
+        return;
+      }
+      if (!this.welcomed) return;
+      if (msg.sender === this.hostId) {
+        this.lastPong = performance.now();
+        if (msg.type === '_leave') { this.hostLost(); return; }
+        if (msg.type === '_abort') { this.abort(msg.reason); return; }
+        if (msg.type === '_lobby' && !this.active) {
+          this.mode = msg.mode;
+          highlightModeButtons();
+          document.getElementById('p2p-status').textContent =
+            `당신은 P${this.myId + 1} · 대기실 ${msg.joined} / ${this.playerCount()}명 (${MODE_LABELS[this.mode]})`;
+          return;
+        }
+        if (msg.type === '_start' && !this.active) {
+          this.active = true;
+          this.mode = msg.mode;
+          document.getElementById('p2p-modal').style.display = 'none';
+          canvas.focus();
+          startMatch(this.mode);
+          return;
+        }
+      }
     }
-    if (msg.type === '_pong') return;
 
-    if (msg.type === '_hello' && this.isHost && !this.active) {
-      if (this.connectTimeout) { clearTimeout(this.connectTimeout); this.connectTimeout = null; }
-      this.active = true;
-      this.send({ type: '_welcome' }, 1);
-      document.getElementById('p2p-modal').style.display = 'none';
-      canvas.focus();
-      this.startHeartbeat();
-      startMatch('1v1');
-      return;
-    }
-
-    if (msg.type === '_welcome' && !this.isHost && this.joining) {
-      if (this.connectTimeout) { clearTimeout(this.connectTimeout); this.connectTimeout = null; }
-      this.joining = false;
-      this.active = true;
-      document.getElementById('btn-join-room').disabled = false;
-      document.getElementById('p2p-modal').style.display = 'none';
-      canvas.focus();
-      this.startHeartbeat();
-      return;
-    }
-
+    if (msg.type.startsWith('_')) return;
     if (!this.active) return;
 
     switch (msg.type) {
       case 'roundSetup': {
         this.remoteTarget = null;
-        this.lastHandledFireSeq = -1;
+        this.lastHandledFireSeq = {};
         RNG.setSeed(msg.seed);
-        G.mode = '1v1';
+        G.mode = msg.mode;
         G.round = msg.round;
         G.turnCount = 0;
         G.nextFirst = msg.nextFirst;
@@ -279,6 +408,7 @@ const Net = {
           G.fields.length = 0;
         }
         if (msg.states) syncAuthoritativeState(msg.states);
+        G.turnCount = msg.turnCount - 1;
         beginTurn(msg.turn, msg.wind, msg.seed);
         break;
       }
@@ -310,16 +440,17 @@ const Net = {
         break;
       }
       case 'fireAck': {
-        if (this.pendingFireAck) {
+        if (msg.to === this.clientId && this.pendingFireAck) {
           clearInterval(this.pendingFireAck);
           this.pendingFireAck = null;
         }
         break;
       }
       case 'fire': {
-        this.send({ type: 'fireAck', seq: msg.seq }, 1);
-        if (msg.seq <= this.lastHandledFireSeq) break;
-        this.lastHandledFireSeq = msg.seq;
+        // 방장이 수신 확인 (방장이 쏜 탄은 참가자가 확인)
+        if (this.isHost || msg.sender === this.hostId) this.send({ type: 'fireAck', seq: msg.seq, to: msg.sender }, 1);
+        if (msg.seq <= (this.lastHandledFireSeq[msg.id] ?? -1)) break;
+        this.lastHandledFireSeq[msg.id] = msg.seq;
         this.remoteTarget = null;
 
         const p = players[msg.id];
@@ -363,15 +494,26 @@ const Net = {
         break;
       }
       case 'rematch': {
-        startMatch('1v1');
+        startMatch(this.mode);
         break;
       }
     }
   }
 };
 
+const MODE_LABELS = { '1v1': '1:1', '2v2': '2:2 팀전', ffa4: '4인 난투' };
+function highlightModeButtons() {
+  document.querySelectorAll('.mode-btn').forEach(el => {
+    el.classList.toggle('on', el.dataset.mode === Net.mode);
+    el.disabled = !Net.isHost;
+  });
+}
+document.querySelectorAll('.mode-btn').forEach(el => {
+  el.addEventListener('click', () => Net.setMode(el.dataset.mode));
+});
+
 window.addEventListener('beforeunload', () => {
-  if (Net.active) Net.send({ type: '_leave' }, 0);
+  if (Net.active || Net.welcomed || Object.keys(Net.peers).length) Net.send({ type: '_leave' }, 0);
 });
 
 document.getElementById('btn-join-room').addEventListener('click', () => {
