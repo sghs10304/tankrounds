@@ -4,33 +4,38 @@
 const PLAYER_DEFS = [
   { name: 'P1', color: '#4fc3f7', startAngle: 45, aimDir: 1, keys: { left: 'KeyA', right: 'KeyD', up: 'KeyW', down: 'KeyS', fire: 'Space' } },
   { name: 'P2', color: '#ff8a65', startAngle: 135, aimDir: -1, keys: { left: 'ArrowLeft', right: 'ArrowRight', up: 'ArrowUp', down: 'ArrowDown', fire: 'Enter' } },
+  { name: 'P3', color: '#69f0ae', startAngle: 55, aimDir: 1, keys: { left: 'KeyJ', right: 'KeyL', up: 'KeyI', down: 'KeyK', fire: 'KeyU' } },
+  { name: 'P4', color: '#ffd54f', startAngle: 125, aimDir: -1, keys: { left: 'Numpad4', right: 'Numpad6', up: 'Numpad8', down: 'Numpad5', fire: 'Numpad0' } },
 ];
 
 function makePlayer(i) {
   const d = PLAYER_DEFS[i];
   return {
     id: i, name: d.name, color: d.color, keys: d.keys, aimDir: d.aimDir, startAngle: d.startAngle,
+    team: i % 2, // 2v2: 0번팀(P1, P3) vs 1번팀(P2, P4)
     score: 0, cards: [], stats: computeStats([]),
     x: 0, y: 0, vx: 0, vy: 0, air: false, tilt: 0, hp: 150, roundMaxHp: 150, alive: true,
-    angle: d.startAngle, side: i === 0 ? 1 : -1,
+    angle: d.startAngle, side: d.startAngle < 90 ? 1 : -1,
     lastShotAngle: null, lastShotPower: null,
     dmgBoost: 1, radiusBoost: 1, bonusShots: 0, turnDmgTaken: 0,
-    phoenixCharges: 0, empDebuff: false,
+    phoenixCharges: 0, empDebuff: 0,
     power: 55, charging: false, chargeT: 0, charge: 0, fuel: 0,
     recoil: 0, hitFlash: 0, wheel: 0, tread: 0, lastX: 0
   };
 }
-const players = [makePlayer(0), makePlayer(1)];
+let players = [makePlayer(0), makePlayer(1)];
 
 const G = {
+  mode: '1v1', // '1v1', '2v2', 'ffa4'
   state: 'title', stateT: 0, time: 0, timeScale: 1,
   round: 0, turn: 0, turnCount: 0, nextFirst: 0, wind: 0,
   biome: 'grass', disaster: null, localHintShown: false,
+  teamScores: [0, 0],
   shells: [], pending: [], particles: [], rings: [], floaters: [], flashes: [], fields: [], streaks: [],
   poisons: [], crates: [], portals: [], mines: [], lightnings: [],
-  events: [], // 확장용 자연재해/특수 이벤트 플러그인 배열
+  events: [],
   shake: 0, screenFlash: 0, banner: null, settleT: 0, resolveT: 0,
-  choices: [], sel: 1, picked: -1, cardLoser: 0, winner: -1,
+  choices: [], sel: 1, picked: -1, cardLoser: 0, cardQueue: [], winner: -1,
 };
 
 function setState(s) { G.state = s; G.stateT = 0; }
@@ -41,29 +46,36 @@ function setBiome(key) {
   BG = makeBackground(G.biome);
 }
 
-function syncAuthoritativeState(msg) {
-  players[0].hp = msg.hp0;
-  players[1].hp = msg.hp1;
-  players[0].alive = msg.alive0;
-  players[1].alive = msg.alive1;
-  players[0].phoenixCharges = msg.ph0;
-  players[1].phoenixCharges = msg.ph1;
-  players[0].x = msg.p0x;
-  players[1].x = msg.p1x;
+function packAuthoritativeState() {
+  return players.map(p => ({
+    hp: p.hp, alive: p.alive, ph: p.phoenixCharges, x: p.x
+  }));
+}
+
+function syncAuthoritativeState(states) {
+  if (!Array.isArray(states)) return;
+  states.forEach((st, i) => {
+    if (!players[i]) return;
+    players[i].hp = st.hp;
+    players[i].alive = st.alive;
+    players[i].phoenixCharges = st.ph;
+    players[i].x = st.x;
+  });
 }
 
 function generateSkyGimmicksData() {
   const crates = [];
   const types = ['power', 'mega', 'multi'];
-  for (let i = 0; i < 2; i++) {
+  const cnt = players.length > 2 ? 3 : 2;
+  for (let i = 0; i < cnt; i++) {
     crates.push({
-      x: Math.round(rand(400, W - 400)), y: Math.round(rand(180, 400)), r: 22,
+      x: Math.round(rand(320, W - 320)), y: Math.round(rand(180, 400)), r: 22,
       type: types[(RNG.next() * types.length) | 0], bob: rand(0, TAU)
     });
   }
   const portals = RNG.next() < 0.7 ? [
-    { x: Math.round(rand(440, 710)), y: Math.round(rand(220, 440)), r: 30, color: '#00e5ff' },
-    { x: Math.round(rand(890, 1160)), y: Math.round(rand(220, 440)), r: 30, color: '#ff4081' }
+    { x: Math.round(rand(420, 710)), y: Math.round(rand(220, 440)), r: 30, color: '#00e5ff' },
+    { x: Math.round(rand(890, 1180)), y: Math.round(rand(220, 440)), r: 30, color: '#ff4081' }
   ] : [];
   return { crates, portals };
 }
@@ -86,7 +98,7 @@ function resetPlayersForRound() {
     p.lastShotAngle = null; p.lastShotPower = null; p.dmgBoost = 1; p.radiusBoost = 1; p.bonusShots = 0;
     p.turnDmgTaken = 0;
     p.phoenixCharges = p.stats.phoenix;
-    p.empDebuff = false;
+    p.empDebuff = 0;
   }
   G.shells.length = G.pending.length = G.particles.length = G.rings.length = G.floaters.length = G.flashes.length = G.fields.length = G.poisons.length = G.mines.length = G.lightnings.length = G.events.length = 0;
   G.screenFlash = 0; G.shake = 0;
@@ -96,17 +108,49 @@ function setupField() {
   const biomeKeys = Object.keys(BIOME_DEFS).filter(k => k !== G.biome);
   const pickedBiome = biomeKeys[(RNG.next() * biomeKeys.length) | 0];
   setBiome(pickedBiome);
-  const x1 = Math.round(rand(150, 300)), x2 = Math.round(W - rand(150, 300));
-  Terrain.generate(x1, x2);
-  players[0].x = x1; players[1].x = x2;
+
+  let spawnXs = [];
+  if (players.length === 2) {
+    spawnXs = [Math.round(rand(150, 300)), Math.round(W - rand(150, 300))];
+  } else {
+    // 4인전(2v2 / 4인 난투): 4구간 배치
+    if (G.mode === '2v2') {
+      // 블루팀(P1, P3) 좌측 진영 vs 레드팀(P2, P4) 우측 진영
+      const xP1 = Math.round(rand(110, 210));
+      const xP3 = Math.round(rand(370, 500));
+      const xP4 = Math.round(rand(W - 500, W - 370));
+      const xP2 = Math.round(rand(W - 210, W - 110));
+      spawnXs = [xP1, xP2, xP3, xP4];
+    } else {
+      // 4인 개인전: 균등 4분할 랜덤 배치
+      const zones = [[110, 280], [450, 640], [960, 1150], [1320, 1490]];
+      const shuffled = shuffle(zones);
+      spawnXs = shuffled.map(z => Math.round(rand(z[0], z[1])));
+    }
+  }
+
+  Terrain.generate(spawnXs);
+  players.forEach((p, idx) => { p.x = spawnXs[idx]; });
   resetPlayersForRound();
   const gimmicks = generateSkyGimmicksData();
   G.crates = gimmicks.crates; G.portals = gimmicks.portals;
 }
 
-function startMatch() {
-  for (const p of players) { p.score = 0; p.cards = []; p.stats = computeStats([]); p.power = 55; }
-  G.round = 0; G.nextFirst = 0; G.winner = -1;
+function startMatch(mode = '1v1') {
+  G.mode = mode;
+  const count = mode === '1v1' ? 2 : 4;
+  players = Array.from({ length: count }, (_, i) => {
+    const p = makePlayer(i);
+    if (mode === '2v2') {
+      p.team = i % 2; // 0: 블루팀(P1, P3), 1: 레드팀(P2, P4)
+      p.color = p.team === 0 ? (i === 0 ? '#4fc3f7' : '#00e5ff') : (i === 1 ? '#ff8a65' : '#ff5252');
+      p.startAngle = p.team === 0 ? 45 : 135;
+      p.aimDir = p.team === 0 ? 1 : -1;
+    }
+    return p;
+  });
+  G.teamScores = [0, 0];
+  G.round = 0; G.nextFirst = 0; G.winner = -1; G.localHintShown = false;
   startRound();
 }
 
@@ -121,12 +165,13 @@ function startRound() {
   if (Net.active && Net.isHost) {
     Net.send({
       type: 'roundSetup', seed, biome: G.biome, round: G.round, nextFirst: G.nextFirst, turn: G.nextFirst, wind,
-      terrainTop: Array.from(Terrain.top), p0x: players[0].x, p1x: players[1].x, crates: G.crates, portals: G.portals
+      terrainTop: Array.from(Terrain.top), px: players.map(p => p.x), crates: G.crates, portals: G.portals
     }, 1);
   }
   beginTurn(G.nextFirst, wind, seed);
   const b = BIOME_DEFS[G.biome];
-  const sub = G.round === 1 ? `⚡ 초고속 1R (체력 50) · ${b.icon} ${b.name}` : G.round === 2 ? `⚡ 스피드 2R (체력 90) · ${b.icon} ${b.name}` : G.round === 3 ? `⚡ 3R (체력 120) · ${b.icon} ${b.name}` : `${b.icon} ${b.name} · ${players[G.nextFirst].name} 선공`;
+  const modeLabel = G.mode === '2v2' ? ' [2:2 팀전]' : (G.mode === 'ffa4' ? ' [4인 난투]' : '');
+  const sub = G.round === 1 ? `⚡ 초고속 1R (체력 50) · ${b.icon} ${b.name}${modeLabel}` : G.round === 2 ? `⚡ 스피드 2R (체력 90) · ${b.icon} ${b.name}${modeLabel}` : G.round === 3 ? `⚡ 3R (체력 120) · ${b.icon} ${b.name}${modeLabel}` : `${b.icon} ${b.name}${modeLabel} · ${players[G.nextFirst].name} 선공`;
   showBanner(`ROUND ${G.round}`, sub, '#ffffff', 2.2);
 }
 
@@ -139,11 +184,12 @@ function applySuddenDeath() {
       damageTank(pl, sdDmg, '#ff1744', null);
     }
   }
-  const dropCount = Math.min(5, 1 + Math.floor(sdLevel / 2));
+  const dropCount = Math.min(6, 1 + Math.floor(sdLevel / 2));
   Sfx.airstrike();
+  const aliveList = players.filter(p => p.alive);
   for (let k = 0; k < dropCount; k++) {
-    const target = players[k % 2];
-    const mx = target.alive ? clamp(target.x + rand(-180, 180), 40, W - 40) : rand(80, W - 80);
+    const target = aliveList.length ? aliveList[k % aliveList.length] : null;
+    const mx = target ? clamp(target.x + rand(-180, 180), 40, W - 40) : rand(80, W - 80);
     G.pending.push({
       t: 0.25 + k * 0.14, owner: players[G.turn],
       custom: { x: mx, y: -40, vx: rand(-60, 60), vy: 720, damage: 14 + sdLevel * 3, radius: 52 }
@@ -151,6 +197,15 @@ function applySuddenDeath() {
   }
   G.shake = Math.max(G.shake, 16);
   G.floaters.push({ x: W / 2, y: 185, text: `🔥 서든데스 (${G.turnCount}턴)! 전원 -${sdDmg} & 하늘 유성 낙하!`, color: '#ff5252', t: 0, life: 2.2 });
+}
+
+function getNextAliveTurn(cur) {
+  const n = players.length;
+  for (let step = 1; step <= n; step++) {
+    const idx = (cur + step) % n;
+    if (players[idx] && players[idx].alive) return idx;
+  }
+  return cur;
 }
 
 function beginTurn(i, forcedWind = null, forcedSeed = null) {
@@ -161,22 +216,27 @@ function beginTurn(i, forcedWind = null, forcedSeed = null) {
   for (const p of players) p.turnDmgTaken = 0;
   const p = players[i];
 
-  if (p.empDebuff) { p.fuel = Math.round(p.stats.maxFuel * 0.2); p.empDebuff = false; }
+  if (p.empDebuff === 2) { p.fuel = 0; p.empDebuff = 0; }
+  else if (p.empDebuff === 1) { p.fuel = Math.round(p.stats.maxFuel * 0.2); p.empDebuff = 0; }
   else { p.fuel = p.stats.maxFuel; }
   p.charging = false; p.charge = 0; p.chargeT = 0;
 
-  // 로컬 2인용 최초 시작 시 1회 조작법 팝업 안내
   if (!Net.active && !G.localHintShown && G.round === 1 && i === 0) {
     G.localHintShown = true;
-    G.floaters.push({ x: players[1].x, y: players[1].y - 95, text: '💡 P2 조작: 방향키(←→↑↓) + Enter!', color: '#ff8a65', t: 0, life: 3.8 });
+    if (players.length === 2) {
+      G.floaters.push({ x: players[1].x, y: players[1].y - 95, text: '💡 P2 조작: 방향키(←→↑↓) + Enter!', color: '#ff8a65', t: 0, life: 3.8 });
+    } else {
+      G.floaters.push({ x: W / 2, y: 210, text: '💡 4인 조작: P1(WASD+Space) · P2(방향키+Enter) · P3(IJKL+U) · P4(넘패드4856+0)', color: '#ffd54f', t: 0, life: 4.5 });
+    }
   }
 
   for (let idx = G.poisons.length - 1; idx >= 0; idx--) {
     const pz = G.poisons[idx];
+    const owner = players[pz.ownerId];
     for (const pl of players) {
-      if (!pl.alive || pl.id === pz.ownerId) continue;
+      if (!pl.alive || !isHostile(owner, pl)) continue;
       if (Math.hypot(pl.x - pz.x, (pl.y - 15) - pz.y) <= pz.r + 20) {
-        damageTank(pl, pz.dmg, '#76ff03', players[pz.ownerId]);
+        damageTank(pl, pz.dmg, '#76ff03', (owner && owner.stats.synVampire) ? owner : null);
       }
     }
     pz.turnsLeft--;
@@ -318,10 +378,11 @@ function updateTank(p, dt) {
   if (p.alive) {
     for (let i = G.mines.length - 1; i >= 0; i--) {
       const m = G.mines[i];
-      if (m.ownerId === p.id) continue;
+      const owner = players[m.ownerId];
+      if (!isHostile(owner, p)) continue;
       if (Math.hypot(p.x - m.x, p.y - m.y) < 28 * s) {
         G.mines.splice(i, 1);
-        explode({ x: m.x, y: m.y, radius: m.radius, damage: m.damage }, players[m.ownerId]);
+        explode({ x: m.x, y: m.y, radius: m.radius, damage: m.damage }, owner);
       }
     }
   }
@@ -387,17 +448,17 @@ function fire(p, fromRemote = false) {
   const eventRoll = RNG.next();
 
   if (eventRoll < 0.01) {
-    // [특수 이벤트 1] 1% 확률: 돌발 전술 핵폭탄 (맵 초토화 + 양측 자폭 무승부)
+    // [특수 이벤트 1] 1% 확률: 돌발 전술 핵폭탄 (맵 초토화 + 전원 자폭 무승부)
     G.pending.push({ t: 0, owner: p, angle: a, power: pp, isDrawNuke: true });
     showBanner('☢️ 핵폭탄 경보!', '1% 확률 돌발 핵탄두 장전! 전원 대피!', '#c6ff00', 1.8);
-  } else if (eventRoll < 0.05) {
-    // [특수 이벤트 2] 4% 확률: 불발탄 (자기 기체에서 포탄 즉시 폭발)
+  } else if (eventRoll < 0.03) {
+    // [특수 이벤트 2] 2% 확률 (0.01 ~ 0.03): 불발탄 (기존 4%에서 확률 대폭 하향)
     G.pending.push({ t: 0, owner: p, angle: a, power: pp, isMisfire: true });
-    showBanner('💥 불발탄 발생!', '4% 확률 포신 내부 점화!', '#ff5252', 1.5);
+    showBanner('💥 불발탄 발생!', '2% 확률 포신 내부 점화!', '#ff5252', 1.5);
   } else {
     const totalShots = st.shots + p.bonusShots;
     for (let i = 0; i < totalShots; i++) {
-      const spread = st.buckshot > 0 ? rand(-5.5, 5.5) : (i > 0 ? rand(-1.0, 1.0) : 0);
+      const spread = (st.buckshot > 0 || st.synGatling) ? rand(-5.5, 5.5) : (i > 0 ? rand(-1.0, 1.0) : 0);
       G.pending.push({ t: i * st.shotDelay, owner: p, angle: a + spread * Math.PI / 180, power: pp });
     }
   }
@@ -538,7 +599,7 @@ function stepSawblade(s, dt) {
   Terrain.carve(s.x, s.y, 13);
   P(s.x, s.y, fxRand(-90, 90), fxRand(-140, -40), { life: 0.35, size: 2.5, color: '#ffd54f', kind: 'spark' });
   for (const p of players) {
-    if (p.alive && p !== s.owner && hitsTank(s.x, s.y, s.r + 6, p)) {
+    if (p.alive && isHostile(s.owner, p) && hitsTank(s.x, s.y, s.r + 6, p)) {
       detonate(s, { type: 'tank', tank: p });
       return false;
     }
@@ -574,8 +635,8 @@ function stepDrill(s, dt) {
 function detonate(s, hit) {
   const owner = s.owner;
   if (s.isDrawNuke) {
-    Terrain.carve(s.x, s.y, 520);
-    blastFX(s.x, s.y, 260, false);
+    Terrain.carve(s.x, s.y, 650);
+    blastFX(s.x, s.y, 280, false);
     G.screenFlash = 1.0;
     G.shake = 42;
     Sfx.ko();
@@ -586,7 +647,7 @@ function detonate(s, hit) {
         killTank(pl);
       }
     }
-    showBanner('☢️ 핵폭발 무승부!', '전장이 초토화되어 이번 라운드는 무효 처리됩니다', '#c6ff00', 2.4);
+    showBanner('☢️ 핵폭발 무승부!', '전원 파괴! 무승부 보상으로 모두 카드를 선택합니다', '#c6ff00', 2.4);
     return;
   }
   const c = { x: s.x, y: s.y, shell: s, radius: s.radius, damage: s.damage, raise: false, noCarve: false, raiseRadius: 0, hit };
@@ -622,7 +683,7 @@ function damageTank(p, amt, col = '#ff5252', attacker = null) {
   p.hp -= amt; p.hitFlash = 0.25;
   G.floaters.push({ x: p.x, y: p.y - 56 * p.stats.tankScale, text: '-' + amt, color: col, t: 0, life: 1.0 });
 
-  if (attacker && attacker !== p && attacker.alive && attacker.stats.leech > 0) {
+  if (attacker && isHostile(attacker, p) && attacker.alive && attacker.stats.leech > 0) {
     const heal = Math.max(1, Math.round(amt * attacker.stats.leech));
     attacker.hp = Math.min(attacker.roundMaxHp, attacker.hp + heal);
     G.floaters.push({ x: attacker.x, y: attacker.y - 68, text: `🧛 +${heal}`, color: '#ff5252', t: 0, life: 1.0 });
@@ -668,7 +729,7 @@ function computeGuide(p) {
 
 /* ============================ 필드 이펙트 (블랙홀 & UFO) ============================ */
 function spawnBlackhole(x, y, owner, dur, power) {
-  G.fields.push({ type: 'blackhole', x, y, owner, t: 0, life: dur, R: 185, power, rot: 0, acc: [0, 0] });
+  G.fields.push({ type: 'blackhole', x, y, owner, t: 0, life: dur, R: 185, power, rot: 0, acc: [0, 0, 0, 0] });
   Sfx.hum(dur);
 }
 function updateFields(dt) {
@@ -676,7 +737,7 @@ function updateFields(dt) {
     const f = G.fields[i];
     f.t += dt;
     if (f.type === 'ufo') {
-      const e = enemyTank(f.owner);
+      const e = enemyTank(f.owner, f.x, f.y + 210);
       if (e && Math.abs(e.x - f.x) < f.R) {
         e.air = true;
         if (f.t < f.life * 0.68) {
@@ -714,14 +775,14 @@ function updateFields(dt) {
     f.rot += dt * 6;
     const k = Math.min(1, f.t / 0.3) * Math.min(1, (f.life - f.t) / 0.35);
     for (const p of players) {
-      if (!p.alive || p.id === f.owner.id) continue;
+      if (!p.alive || !isHostile(f.owner, p)) continue;
       const cy = p.y - 14 * p.stats.tankScale;
       const dx = f.x - p.x, dy = f.y - cy, d = Math.hypot(dx, dy);
       if (d < f.R * k) {
         const pull = (70 + 260 * (1 - d / f.R) * f.power) * dt;
         moveTankX(p, Math.sign(dx) * Math.min(pull, Math.abs(dx)));
         if (d < 90) {
-          f.acc[p.id] += (12 + (f.power - 1) * 6) * dt;
+          f.acc[p.id] = (f.acc[p.id] || 0) + (12 + (f.power - 1) * 6) * dt;
           if (f.acc[p.id] >= 5) { damageTank(p, f.acc[p.id], '#b388ff', f.owner); f.acc[p.id] = 0; }
         }
       }
@@ -739,19 +800,31 @@ function updateFields(dt) {
       { life: 0.8, size: 2.5, grav: 0, color: Math.random() < 0.5 ? '#b388ff' : '#80deea', kind: 'dot' });
     G.shake = Math.max(G.shake, 2);
     if (f.t >= f.life) {
-      G.flashes.push({ x: f.x, y: f.y, r: 140, t: 0, life: 0.3 });
-      G.rings.push({ x: f.x, y: f.y, max: 180, t: 0, life: 0.45, color: '190,140,255' });
-      burst(f.x, f.y, 24, { colors: ['#b388ff', '#ffffff', '#80deea'], speed: 420, life: 0.7, size: 3, grav: 0, kind: 'spark', drag: 2 });
-      G.shake = Math.max(G.shake, 12); Sfx.pop();
+      if (f.owner && f.owner.stats.synSupernova) {
+        G.floaters.push({ x: f.x, y: f.y - 45, text: '🌌 초신성 붕괴 폭발!', color: '#d500f9', t: 0, life: 1.3 });
+        explode({ x: f.x, y: f.y, radius: 135, damage: 34 }, f.owner);
+      } else {
+        G.flashes.push({ x: f.x, y: f.y, r: 140, t: 0, life: 0.3 });
+        G.rings.push({ x: f.x, y: f.y, max: 180, t: 0, life: 0.45, color: '190,140,255' });
+        burst(f.x, f.y, 24, { colors: ['#b388ff', '#ffffff', '#80deea'], speed: 420, life: 0.7, size: 3, grav: 0, kind: 'spark', drag: 2 });
+        G.shake = Math.max(G.shake, 12); Sfx.pop();
+      }
       G.fields.splice(i, 1);
     }
   }
 }
 
-/* ============================ 입력 (로컬 2인 + 온라인 멀티) ============================ */
+/* ============================ 입력 (로컬 2인/4인 + 온라인 멀티) ============================ */
 const keys = {};
-const BLOCK_KEYS = new Set(['Space', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
+const BLOCK_KEYS = new Set(['Space', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Numpad0', 'Numpad4', 'Numpad5', 'Numpad6', 'Numpad8']);
 let hoverTitleBtn = -1;
+
+const TITLE_BTNS = [
+  { mode: '1v1', x: 80, y: 310, w: 335, h: 270, title: '⚔️ 로컬 1 : 1', color: '#4fc3f7', lines: ['1:1 클래식 듀얼', 'P1: WASD + Space', 'P2: 방향키 + Enter', '👉 클릭하여 시작'] },
+  { mode: '2v2', x: 445, y: 310, w: 335, h: 270, title: '🛡️ 로컬 2 : 2 팀전', color: '#ff8a65', lines: ['블루(P1·P3) vs 레드(P2·P4)', '팀원 간 아군 오사 면역', '패배 팀 전원 카드 선택!', '👉 클릭하여 시작'] },
+  { mode: 'ffa4', x: 810, y: 310, w: 335, h: 270, title: '👑 로컬 4인 난투', color: '#ffd54f', lines: ['1:1:1:1 최후의 1인전!', 'P3: IJKL+U / P4: 넘패드', '탈락한 3명 모두 카드 획득', '👉 클릭하여 시작'] },
+  { mode: 'online', x: 1175, y: 310, w: 345, h: 270, title: '🌐 온라인 1 : 1', color: '#69f0ae', lines: ['4자리 방 코드 원격 대전', '학교/기관 와이파이 통과', '실시간 궤적·카드 동기화', '👉 클릭하여 방 열기'] }
+];
 
 function getCanvasCoords(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
@@ -768,10 +841,9 @@ canvas.addEventListener('mousemove', e => {
   }
   const { x, y } = getCanvasCoords(e.clientX, e.clientY);
   let hov = -1;
-  if (y >= 310 && y <= 570) {
-    if (x >= W / 2 - 440 && x <= W / 2 - 30) hov = 0;
-    else if (x >= W / 2 + 30 && x <= W / 2 + 440) hov = 1;
-  }
+  TITLE_BTNS.forEach((b, idx) => {
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) hov = idx;
+  });
   hoverTitleBtn = hov;
   canvas.style.cursor = hov !== -1 ? 'pointer' : 'default';
 });
@@ -780,14 +852,16 @@ canvas.addEventListener('click', e => {
   Sfx.init();
   if (G.state !== 'title') return;
   const { x, y } = getCanvasCoords(e.clientX, e.clientY);
-  if (y >= 310 && y <= 570) {
-    if (x >= W / 2 - 440 && x <= W / 2 - 30) {
+  for (const b of TITLE_BTNS) {
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
       canvas.style.cursor = 'default';
-      Net.active = false;
-      startMatch();
-    } else if (x >= W / 2 + 30 && x <= W / 2 + 440) {
-      canvas.style.cursor = 'default';
-      Net.openModal();
+      if (b.mode === 'online') {
+        Net.openModal();
+      } else {
+        Net.active = false;
+        startMatch(b.mode);
+      }
+      break;
     }
   }
 });
@@ -838,17 +912,15 @@ function getActiveControls(p) {
 function onKeyDown(code) {
   switch (G.state) {
     case 'title': {
-      if (code === 'Digit1' || code === 'Numpad1') {
-        Net.active = false;
-        startMatch();
-      } else if (code === 'Digit2' || code === 'Numpad2') {
-        Net.openModal();
-      }
+      if (code === 'Digit1' || code === 'Numpad1') { Net.active = false; startMatch('1v1'); }
+      else if (code === 'Digit2' || code === 'Numpad2') { Net.active = false; startMatch('2v2'); }
+      else if (code === 'Digit3' || code === 'Numpad3') { Net.active = false; startMatch('ffa4'); }
+      else if (code === 'Digit4' || code === 'Numpad4') { Net.openModal(); }
       break;
     }
     case 'aiming': {
       const p = players[G.turn];
-      if (!isMyTurnControl(p)) break;
+      if (!p || !isMyTurnControl(p)) break;
       const ctrl = getActiveControls(p);
       if (p.alive && ctrl.fireCode.includes(code) && !p.charging && G.stateT > 0.25) {
         p.charging = true; p.charge = 0; p.chargeT = 0; Sfx.chargeStart();
@@ -860,13 +932,13 @@ function onKeyDown(code) {
       if (Net.active && G.cardLoser !== Net.myId) break;
       const num = { Digit1: 0, Digit2: 1, Digit3: 2, Numpad1: 0, Numpad2: 1, Numpad3: 2 }[code];
       if (num !== undefined) { pickCard(num); break; }
-      if (code === 'ArrowLeft' || code === 'KeyA') {
+      if (code === 'ArrowLeft' || code === 'KeyA' || code === 'KeyJ') {
         G.sel = (G.sel + 2) % 3; Sfx.cardMove();
         if (Net.active) Net.send({ type: 'cardSelect', sel: G.sel });
-      } else if (code === 'ArrowRight' || code === 'KeyD') {
+      } else if (code === 'ArrowRight' || code === 'KeyD' || code === 'KeyL') {
         G.sel = (G.sel + 1) % 3; Sfx.cardMove();
         if (Net.active) Net.send({ type: 'cardSelect', sel: G.sel });
-      } else if (code === 'Space' || code === 'Enter') {
+      } else if (code === 'Space' || code === 'Enter' || code === 'KeyU' || code === 'Numpad0') {
         pickCard(G.sel);
       }
       break;
@@ -875,7 +947,7 @@ function onKeyDown(code) {
       if (G.stateT > 1 && (code === 'Space' || code === 'Enter')) {
         if (!Net.active || Net.isHost) {
           if (Net.active) Net.send({ type: 'rematch' });
-          startMatch();
+          startMatch(G.mode);
         }
       }
       break;
@@ -884,7 +956,7 @@ function onKeyDown(code) {
 function onKeyUp(code) {
   if (G.state !== 'aiming') return;
   const p = players[G.turn];
-  if (!isMyTurnControl(p)) return;
+  if (!p || !isMyTurnControl(p)) return;
   const ctrl = getActiveControls(p);
   if (p.charging && ctrl.fireCode.includes(code)) fire(p);
 }
@@ -905,7 +977,7 @@ function updateRemoteAimInterpolation(dt) {
 }
 
 function updateActivePlayer(dt) {
-  const p = players[G.turn]; if (!p.alive) return;
+  const p = players[G.turn]; if (!p || !p.alive) return;
   if (!isMyTurnControl(p)) {
     updateRemoteAimInterpolation(dt);
     return;
@@ -941,22 +1013,26 @@ function updateActivePlayer(dt) {
   }
 }
 
+function checkRoundOver() {
+  const alivePlayers = players.filter(p => p.alive);
+  if (G.mode === '2v2') {
+    const team0Alive = alivePlayers.some(p => p.team === 0);
+    const team1Alive = alivePlayers.some(p => p.team === 1);
+    return !team0Alive || !team1Alive;
+  }
+  return alivePlayers.length <= 1;
+}
+
 function finishResolve() {
   if (Net.active && !Net.isHost) return;
 
-  if (players.some(p => p.hp <= 0)) {
+  if (checkRoundOver()) {
     if (Net.active && Net.isHost) {
-      Net.send({
-        type: 'roundEndSync',
-        hp0: players[0].hp, hp1: players[1].hp,
-        alive0: players[0].alive, alive1: players[1].alive,
-        ph0: players[0].phoenixCharges, ph1: players[1].phoenixCharges,
-        p0x: players[0].x, p1x: players[1].x
-      }, 1);
+      Net.send({ type: 'roundEndSync', states: packAuthoritativeState() }, 1);
     }
     endRound();
   } else {
-    const nextTurn = 1 - G.turn;
+    const nextTurn = getNextAliveTurn(G.turn);
     const seed = (Date.now() ^ ((Math.random() * 0xFFFFFFFF) >>> 0)) >>> 0;
     RNG.setSeed(seed);
     const wind = Math.round(rand(-MAX_WIND, MAX_WIND) * 10) / 10;
@@ -966,10 +1042,7 @@ function finishResolve() {
         turn: nextTurn,
         wind,
         seed,
-        hp0: players[0].hp, hp1: players[1].hp,
-        alive0: players[0].alive, alive1: players[1].alive,
-        ph0: players[0].phoenixCharges, ph1: players[1].phoenixCharges,
-        p0x: players[0].x, p1x: players[1].x
+        states: packAuthoritativeState()
       }, 1);
     }
     beginTurn(nextTurn, wind, seed);
@@ -977,28 +1050,56 @@ function finishResolve() {
 }
 
 function endRound() {
-  const [a, b] = players;
-  if (a.hp <= 0 && b.hp <= 0) {
+  const alivePlayers = players.filter(p => p.alive);
+
+  // 1. 무승부 처리 (전원 사망 시에도 모든 플레이어에게 카드 선택 기회 부여!)
+  if (alivePlayers.length === 0) {
     G.winner = -1;
-    showBanner('⚖️ ROUND DRAW!', `무승부! 현재 스코어 ${players[0].score} : ${players[1].score}`, '#c6ff00', 2.2);
+    G.cardQueue = players.map(p => p.id);
+    G.cardLoser = G.cardQueue[0];
+    const scoreTxt = G.mode === '2v2' ? `블루 ${G.teamScores[0]} : ${G.teamScores[1]} 레드` : players.map(p => `${p.name}:${p.score}`).join(' · ');
+    showBanner('⚖️ ROUND DRAW!', `무승부! 전원 카드 1장씩 선택 · ${scoreTxt}`, '#c6ff00', 2.4);
     setState('roundEnd');
     return;
   }
-  const loser = a.hp <= 0 ? 0 : 1;
-  const winner = 1 - loser;
+
+  // 2. 2:2 팀전 승리 처리
+  if (G.mode === '2v2') {
+    const winTeam = alivePlayers[0].team;
+    const loseTeam = 1 - winTeam;
+    G.teamScores[winTeam]++;
+    G.winner = winTeam;
+    const losers = players.filter(p => p.team === loseTeam);
+    G.nextFirst = losers[0].id;
+    G.cardQueue = losers.map(p => p.id);
+    G.cardLoser = G.cardQueue[0];
+    const teamName = winTeam === 0 ? '블루팀 (P1·P3)' : '레드팀 (P2·P4)';
+    const teamCol = winTeam === 0 ? '#4fc3f7' : '#ff8a65';
+    showBanner(`${teamName} 승리!`, `블루 ${G.teamScores[0]} : ${G.teamScores[1]} 레드`, teamCol, 2.2);
+    setState('roundEnd');
+    return;
+  }
+
+  // 3. 1:1 및 1:1:1:1 개인전 승리 처리
+  const winner = alivePlayers[0].id;
   players[winner].score++;
-  G.nextFirst = loser;
-  G.cardLoser = loser; G.winner = winner;
-  showBanner(`${players[winner].name} 승리!`, `${players[0].score} : ${players[1].score}`, players[winner].color, 2.2);
+  G.winner = winner;
+  const losers = players.filter(p => p.id !== winner);
+  G.nextFirst = losers[0].id;
+  G.cardQueue = losers.map(p => p.id);
+  G.cardLoser = G.cardQueue[0];
+  const scoreSub = players.length === 2 ? `${players[0].score} : ${players[1].score}` : players.map(p => `${p.name} ${p.score}승`).join('  |  ');
+  showBanner(`${players[winner].name} 승리!`, scoreSub, players[winner].color, 2.2);
   setState('roundEnd');
 }
 
 function openCards() {
   if (Net.active && !Net.isHost) return;
+  G.cardLoser = G.cardQueue[0];
   G.choices = shuffle(CARD_POOL).slice(0, 3);
   G.sel = 1; G.picked = -1;
   if (Net.active && Net.isHost) {
-    Net.send({ type: 'cardChoices', choices: G.choices, loser: G.cardLoser }, 1);
+    Net.send({ type: 'cardChoices', choices: G.choices, loser: G.cardLoser, queue: G.cardQueue }, 1);
   }
   setState('cards');
 }
@@ -1009,10 +1110,17 @@ function pickCard(i, fromRemote = false) {
     Net.send({ type: 'cardPick', index: i }, 1);
   }
   const p = players[G.cardLoser];
+  const prevSynCount = p.stats.synergies.length;
   p.cards.push(G.choices[i]);
   p.stats = computeStats(p.cards);
   G.picked = i; G.sel = i;
-  Sfx.cardPick();
+  if (p.stats.synergies.length > prevSynCount) {
+    const newSyn = p.stats.synergies[p.stats.synergies.length - 1];
+    Sfx.synergy();
+    showBanner(`${newSyn.icon} 시너지 각성!`, `${p.name}: [${newSyn.name}] ${newSyn.desc}`, newSyn.color, 2.2);
+  } else {
+    Sfx.cardPick();
+  }
   setState('cardPicked');
 }
 
@@ -1057,13 +1165,28 @@ function update(raw) {
     }
     case 'roundEnd':
       if (G.stateT > 2.5) {
-        if (G.winner === -1) startRound();
-        else if (players[G.winner].score >= WINS_TO_MATCH) setState('matchOver');
-        else openCards();
+        if (G.winner !== -1) {
+          const isMatchEnd = G.mode === '2v2'
+            ? G.teamScores[G.winner] >= WINS_TO_MATCH
+            : players[G.winner].score >= WINS_TO_MATCH;
+          if (isMatchEnd) {
+            setState('matchOver');
+            break;
+          }
+        }
+        // 무승부(G.winner === -1)이거나 매치가 아직 안 끝났으면 카드 선택창 오픈!
+        openCards();
       }
       break;
     case 'cardPicked':
-      if (G.stateT > 0.95) startRound();
+      if (G.stateT > 0.95) {
+        G.cardQueue.shift();
+        if (G.cardQueue.length > 0) {
+          openCards();
+        } else {
+          startRound();
+        }
+      }
       break;
   }
 }
@@ -1181,6 +1304,18 @@ function drawTank(p) {
   if (alive) { ctx.strokeStyle = '#c8ccd6'; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(-10, -29); ctx.lineTo(-14, -46); ctx.stroke(); }
   ctx.restore();
   ctx.restore();
+
+  // 탱크 머리 위 이름표 (4인전에서 식별 용이)
+  if (players.length > 2 && alive) {
+    ctx.save();
+    ctx.font = `bold 13px ${FONT}`; ctx.textAlign = 'center';
+    const teamTag = G.mode === '2v2' ? (p.team === 0 ? '[블루] ' : '[레드] ') : '';
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillText(teamTag + p.name, p.x + 1, p.y - 44 * s + 1);
+    ctx.fillStyle = p.color;
+    ctx.fillText(teamTag + p.name, p.x, p.y - 44 * s);
+    ctx.restore();
+  }
 }
 
 function drawProtractorHUD(p) {
@@ -1222,9 +1357,9 @@ function drawProtractorHUD(p) {
     ctx.restore();
   }
 
-  const baseAng = p.id === 0 ? 0 : -Math.PI;
+  const baseAng = p.side === 1 ? 0 : -Math.PI;
   const curAng = -aw;
-  ctx.fillStyle = p.id === 0 ? 'rgba(79, 195, 247, 0.22)' : 'rgba(255, 138, 101, 0.22)';
+  ctx.fillStyle = p.side === 1 ? 'rgba(79, 195, 247, 0.22)' : 'rgba(255, 138, 101, 0.22)';
   ctx.beginPath();
   ctx.moveTo(0, 0);
   ctx.arc(0, 0, R, Math.min(baseAng, curAng), Math.max(baseAng, curAng));
@@ -1396,7 +1531,7 @@ function drawWorld() {
   for (const p of players) drawTank(p);
   for (const f of G.fields) drawField(f);
   for (const ev of G.events) if (ev.draw) ev.draw(ctx);
-  if (G.state === 'aiming') { const p = players[G.turn]; if (p.alive) drawProtractorHUD(p); }
+  if (G.state === 'aiming') { const p = players[G.turn]; if (p && p.alive) drawProtractorHUD(p); }
   for (const s of G.shells) drawShell(s);
 
   for (const l of G.lightnings) {
@@ -1453,75 +1588,140 @@ function countCards(p) {
 }
 
 function drawHUD() {
-  ctx.fillStyle = 'rgba(5,6,20,0.65)'; ctx.fillRect(0, 0, W, 115);
-  players.forEach((p, i) => {
-    const pw = 640, x0 = i === 0 ? 30 : W - 30 - pw;
-    const active = (G.state === 'aiming' || G.state === 'resolving') && G.turn === i;
-    const tag = Net.active ? (i === Net.myId ? ' (나)' : ' (상대)') : '';
-    ctx.textAlign = 'left'; ctx.font = `bold 20px ${FONT}`;
-    ctx.fillStyle = p.color; ctx.fillText(p.name + tag + (active ? '  ▶' : ''), x0, 28);
-    for (let k = 0; k < WINS_TO_MATCH; k++) { ctx.fillStyle = k < p.score ? '#ffd54f' : 'rgba(255,255,255,0.25)'; ctx.beginPath(); ctx.arc(x0 + 115 + k * 18, 21, 5.5, 0, TAU); ctx.fill(); }
-    const hp = Math.max(0, p.hp), frac = clamp(hp / p.roundMaxHp, 0, 1);
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'; rr(x0, 38, pw, 20, 10); ctx.fill();
-    const col = frac > 0.5 ? '#66bb6a' : frac > 0.25 ? '#ffca28' : '#ef5350';
-    if (frac > 0) { ctx.fillStyle = col; rr(i === 0 ? x0 : x0 + pw * (1 - frac), 38, Math.max(16, pw * frac), 20, 10); ctx.fill(); }
-    ctx.textAlign = 'center'; ctx.font = `bold 13px ${FONT}`; ctx.fillStyle = '#fff';
-    ctx.fillText(`${Math.ceil(hp)} / ${p.roundMaxHp}`, x0 + pw / 2, 53);
-    const ff = clamp(p.fuel / p.stats.maxFuel, 0, 1);
-    ctx.textAlign = 'left'; ctx.font = `12px ${FONT}`; ctx.fillStyle = '#bbb'; ctx.fillText('이동 연료', x0, 76);
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'; rr(x0 + 70, 67, 220, 9, 4.5); ctx.fill();
-    ctx.fillStyle = '#ffd54f'; if (ff > 0.005) { rr(x0 + 70, 67, 220 * ff, 9, 4.5); ctx.fill(); }
+  ctx.fillStyle = 'rgba(5,6,20,0.68)'; ctx.fillRect(0, 0, W, 118);
 
-    let statusTxt = '';
-    if (p.phoenixCharges > 0) statusTxt += `🔥부활×${p.phoenixCharges}  `;
-    if (p.dmgBoost > 1) statusTxt += `⚡다음1발+40%  `;
-    if (p.radiusBoost > 1) statusTxt += `💣거대폭발  `;
-    if (p.bonusShots > 0) statusTxt += `💥+2발난사`;
-    if (statusTxt) {
-      ctx.fillStyle = '#80deea'; ctx.font = `bold 12px ${FONT}`;
-      ctx.fillText(statusTxt, x0 + 305, 76);
-    }
+  if (players.length === 2) {
+    // 2인용(1:1) 기존 와이드 HUD
+    players.forEach((p, i) => {
+      const pw = 640, x0 = i === 0 ? 30 : W - 30 - pw;
+      const active = (G.state === 'aiming' || G.state === 'resolving') && G.turn === i;
+      const tag = Net.active ? (i === Net.myId ? ' (나)' : ' (상대)') : '';
+      ctx.textAlign = 'left'; ctx.font = `bold 20px ${FONT}`;
+      ctx.fillStyle = p.color; ctx.fillText(p.name + tag + (active ? '  ▶' : ''), x0, 28);
+      for (let k = 0; k < WINS_TO_MATCH; k++) { ctx.fillStyle = k < p.score ? '#ffd54f' : 'rgba(255,255,255,0.25)'; ctx.beginPath(); ctx.arc(x0 + 115 + k * 18, 21, 5.5, 0, TAU); ctx.fill(); }
+      const hp = Math.max(0, p.hp), frac = clamp(hp / p.roundMaxHp, 0, 1);
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; rr(x0, 38, pw, 20, 10); ctx.fill();
+      const col = frac > 0.5 ? '#66bb6a' : frac > 0.25 ? '#ffca28' : '#ef5350';
+      if (frac > 0) { ctx.fillStyle = col; rr(i === 0 ? x0 : x0 + pw * (1 - frac), 38, Math.max(16, pw * frac), 20, 10); ctx.fill(); }
+      ctx.textAlign = 'center'; ctx.font = `bold 13px ${FONT}`; ctx.fillStyle = '#fff';
+      ctx.fillText(`${Math.ceil(hp)} / ${p.roundMaxHp}`, x0 + pw / 2, 53);
+      const ff = clamp(p.fuel / p.stats.maxFuel, 0, 1);
+      ctx.textAlign = 'left'; ctx.font = `12px ${FONT}`; ctx.fillStyle = '#bbb'; ctx.fillText('이동 연료', x0, 76);
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; rr(x0 + 70, 67, 220, 9, 4.5); ctx.fill();
+      ctx.fillStyle = '#ffd54f'; if (ff > 0.005) { rr(x0 + 70, 67, 220 * ff, 9, 4.5); ctx.fill(); }
 
-    const counts = countCards(p);
-    let cx = x0, cy = 84;
-    ctx.font = `13px ${FONT}`;
-    for (const id of CARD_POOL) {
-      if (!counts[id]) continue;
-      const d = CARD_DEFS[id], label = `${d.icon} ${d.short}${counts[id] > 1 ? ' ×' + counts[id] : ''}`;
-      const w = ctx.measureText(label).width + 16;
-      if (cx + w > x0 + pw) { cx = x0; cy += 24; }
-      ctx.fillStyle = 'rgba(0,0,0,0.55)'; rr(cx, cy, w, 21, 10.5); ctx.fill();
-      ctx.strokeStyle = d.color; ctx.lineWidth = 1.5; rr(cx, cy, w, 21, 10.5); ctx.stroke();
-      ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.fillText(label, cx + 8, cy + 15);
-      cx += w + 6;
-    }
-    if (!p.cards.length) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.textAlign = 'left'; ctx.fillText('카드 없음', x0, 99); }
-  });
+      let statusTxt = '';
+      if (p.stats.synergies.length) statusTxt += p.stats.synergies.map(s => `${s.icon}${s.name}`).join(' ') + '  ';
+      if (p.phoenixCharges > 0) statusTxt += `🔥부활×${p.phoenixCharges}  `;
+      if (p.dmgBoost > 1) statusTxt += `⚡+40%  `;
+      if (statusTxt) {
+        ctx.fillStyle = '#80deea'; ctx.font = `bold 12px ${FONT}`;
+        ctx.fillText(statusTxt, x0 + 305, 76);
+      }
+
+      const counts = countCards(p);
+      let cx = x0, cy = 84;
+      ctx.font = `13px ${FONT}`;
+      for (const id of CARD_POOL) {
+        if (!counts[id]) continue;
+        const d = CARD_DEFS[id], label = `${d.icon} ${d.short}${counts[id] > 1 ? ' ×' + counts[id] : ''}`;
+        const w = ctx.measureText(label).width + 16;
+        if (cx + w > x0 + pw) { cx = x0; cy += 24; }
+        ctx.fillStyle = 'rgba(0,0,0,0.55)'; rr(cx, cy, w, 21, 10.5); ctx.fill();
+        ctx.strokeStyle = d.color; ctx.lineWidth = 1.5; rr(cx, cy, w, 21, 10.5); ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.fillText(label, cx + 8, cy + 15);
+        cx += w + 6;
+      }
+      if (!p.cards.length) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.textAlign = 'left'; ctx.fillText('카드 없음', x0, 99); }
+    });
+  } else {
+    // 4인용(2:2 팀전 / 4인 난투) 4분할 컴팩트 HUD
+    const slotXs = [20, 345, 935, 1260];
+    const pw = 315;
+    players.forEach((p, i) => {
+      const x0 = slotXs[i];
+      const active = (G.state === 'aiming' || G.state === 'resolving') && G.turn === i;
+      ctx.textAlign = 'left'; ctx.font = `bold 16px ${FONT}`;
+      const teamBadge = G.mode === '2v2' ? (p.team === 0 ? '[블루] ' : '[레드] ') : '';
+      ctx.fillStyle = p.color;
+      ctx.fillText(`${teamBadge}${p.name}${active ? ' ▶' : ''}`, x0, 24);
+
+      if (G.mode === 'ffa4') {
+        for (let k = 0; k < WINS_TO_MATCH; k++) {
+          ctx.fillStyle = k < p.score ? '#ffd54f' : 'rgba(255,255,255,0.22)';
+          ctx.beginPath(); ctx.arc(x0 + 82 + k * 14, 18, 4.5, 0, TAU); ctx.fill();
+        }
+      }
+
+      const hp = Math.max(0, p.hp), frac = clamp(hp / p.roundMaxHp, 0, 1);
+      ctx.fillStyle = 'rgba(0,0,0,0.65)'; rr(x0, 32, pw, 16, 8); ctx.fill();
+      const col = !p.alive ? '#555' : (frac > 0.5 ? '#66bb6a' : frac > 0.25 ? '#ffca28' : '#ef5350');
+      if (frac > 0) { ctx.fillStyle = col; rr(x0, 32, Math.max(12, pw * frac), 16, 8); ctx.fill(); }
+      ctx.textAlign = 'center'; ctx.font = `bold 11px ${FONT}`; ctx.fillStyle = '#fff';
+      ctx.fillText(p.alive ? `${Math.ceil(hp)} / ${p.roundMaxHp}` : '파괴됨', x0 + pw / 2, 44);
+
+      // 카드 아이콘 요약
+      const counts = countCards(p);
+      let cx = x0;
+      ctx.font = `12px ${FONT}`;
+      for (const id of CARD_POOL) {
+        if (!counts[id]) continue;
+        const d = CARD_DEFS[id];
+        const label = `${d.icon}${counts[id] > 1 ? counts[id] : ''}`;
+        const w = ctx.measureText(label).width + 10;
+        if (cx + w > x0 + pw) break;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)'; rr(cx, 54, w, 20, 8); ctx.fill();
+        ctx.strokeStyle = d.color; ctx.lineWidth = 1.2; rr(cx, 54, w, 20, 8); ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.fillText(label, cx + 5, 68);
+        cx += w + 4;
+      }
+      if (p.stats.synergies.length) {
+        ctx.textAlign = 'left'; ctx.font = `bold 11px ${FONT}`; ctx.fillStyle = '#ffd54f';
+        ctx.fillText('✨' + p.stats.synergies.map(s => s.name).join('·'), x0, 92);
+      }
+    });
+  }
+
   const cx = W / 2;
   const bInfo = BIOME_DEFS[G.biome] || BIOME_DEFS.grass;
   const isSD = G.turnCount > SUDDEN_DEATH_TURN;
-  ctx.textAlign = 'center'; ctx.font = `bold 14px ${FONT}`; ctx.fillStyle = isSD ? '#ff5252' : '#aab';
-  ctx.fillText(`ROUND ${G.round} (${G.turnCount}턴${isSD ? ' · 🔥서든데스' : ''}) · ${bInfo.icon} ${bInfo.name}${Net.active ? ' · ONLINE' : ''}`, cx, 22);
-  ctx.font = `11px ${FONT}`; ctx.fillStyle = '#889'; ctx.fillText(G.disaster ? G.disaster.name : 'WIND', cx, 42);
-  const len = Math.min(Math.abs(G.wind) / MAX_WIND, 1) * 140, dir = Math.sign(G.wind);
+  ctx.textAlign = 'center'; ctx.font = `bold 13px ${FONT}`; ctx.fillStyle = isSD ? '#ff5252' : '#aab';
+  ctx.fillText(`R${G.round} (${G.turnCount}턴${isSD ? ' · 🔥서든데스' : ''}) · ${bInfo.icon}${bInfo.name}`, cx, 20);
+
+  if (G.mode === '2v2') {
+    ctx.font = `bold 14px ${FONT}`; ctx.fillStyle = '#fff';
+    ctx.fillText(`블루 ${G.teamScores[0]} : ${G.teamScores[1]} 레드`, cx, 38);
+  } else {
+    ctx.font = `11px ${FONT}`; ctx.fillStyle = '#889';
+    ctx.fillText('WIND', cx, 38);
+  }
+
+  const barW = players.length === 2 ? 140 : 105;
+  const len = Math.min(Math.abs(G.wind) / MAX_WIND, 1) * barW, dir = Math.sign(G.wind);
   ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(cx - 150, 58); ctx.lineTo(cx + 150, 58); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx, 52); ctx.lineTo(cx, 64); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx - barW - 8, 56); ctx.lineTo(cx + barW + 8, 56); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, 50); ctx.lineTo(cx, 62); ctx.stroke();
   if (len > 1) {
     ctx.strokeStyle = ctx.fillStyle = '#80deea'; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.moveTo(cx, 58); ctx.lineTo(cx + dir * len, 58); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx + dir * (len + 10), 58); ctx.lineTo(cx + dir * len, 50); ctx.lineTo(cx + dir * len, 66); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(cx, 56); ctx.lineTo(cx + dir * len, 56); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx + dir * (len + 9), 56); ctx.lineTo(cx + dir * len, 49); ctx.lineTo(cx + dir * len, 63); ctx.closePath(); ctx.fill();
   }
-  ctx.font = `bold 16px ${FONT}`; ctx.fillStyle = '#e0f7fa';
-  ctx.fillText(G.wind === 0 ? '무풍' : `${dir < 0 ? '◀' : ''} ${Math.abs(G.wind).toFixed(1)} ${dir > 0 ? '▶' : ''}`, cx, 88);
+  ctx.font = `bold 15px ${FONT}`; ctx.fillStyle = '#e0f7fa';
+  ctx.fillText(G.wind === 0 ? '무풍' : `${dir < 0 ? '◀' : ''} ${Math.abs(G.wind).toFixed(1)} ${dir > 0 ? '▶' : ''}`, cx, 84);
   if (G.state === 'aiming' || G.state === 'resolving') {
     const p = players[G.turn];
-    ctx.font = `bold 16px ${FONT}`; ctx.fillStyle = p.color; ctx.fillText(`${p.name} 차례`, cx, 110);
+    if (p) {
+      ctx.font = `bold 15px ${FONT}`; ctx.fillStyle = p.color; ctx.fillText(`${p.name} 차례`, cx, 108);
+    }
   }
   ctx.font = `13px ${FONT}`; ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.textAlign = 'left';
-  ctx.fillText(Net.active ? 'A/D 또는 ←/→ 이동 · W/S 또는 ↑/↓ 각도 · Space/Enter 꾹→떼면 발사' : 'P1  A/D 이동 · W/S 포신 회전 · Space 꾹→떼면 발사', 24, H - 12);
-  ctx.textAlign = 'right';
-  ctx.fillText(Net.active ? `방 코드: ${Net.roomCode || '참가자'}` : 'P2  ←/→ 이동 · ↑/↓ 포신 회전 · Enter 꾹→떼면 발사', W - 24, H - 12);
+  if (players.length === 2) {
+    ctx.fillText(Net.active ? 'A/D 또는 ←/→ 이동 · W/S 또는 ↑/↓ 각도 · Space/Enter 꾹→떼면 발사' : 'P1  A/D 이동 · W/S 포신 회전 · Space 꾹→떼면 발사', 24, H - 12);
+    ctx.textAlign = 'right';
+    ctx.fillText(Net.active ? `방 코드: ${Net.roomCode || '참가자'}` : 'P2  ←/→ 이동 · ↑/↓ 포신 회전 · Enter 꾹→떼면 발사', W - 24, H - 12);
+  } else {
+    ctx.fillText('P1: WASD+Space  |  P2: 방향키+Enter  |  P3: IJKL+U  |  P4: 넘패드(4,8,5,6)+0', 24, H - 12);
+  }
 }
 
 function drawBanner() {
@@ -1541,11 +1741,12 @@ function drawCards() {
   ctx.fillStyle = 'rgba(4,5,16,0.78)'; ctx.fillRect(0, 0, W, H);
   const loser = players[G.cardLoser];
   const isMyPick = !Net.active || G.cardLoser === Net.myId;
+  const remainCnt = G.cardQueue.length;
   ctx.textAlign = 'center';
   ctx.font = `900 44px ${FONT}`; ctx.fillStyle = loser.color;
-  ctx.fillText(isMyPick ? `${loser.name} 카드를 고르세요!` : `${loser.name}님이 카드를 고르는 중...`, W / 2, 100);
+  ctx.fillText(isMyPick ? `${loser.name} 카드를 고르세요!${remainCnt > 1 ? ` (대기 ${remainCnt}명)` : ''}` : `${loser.name}님이 카드를 고르는 중...`, W / 2, 100);
   ctx.font = `18px ${FONT}`; ctx.fillStyle = '#b8bcd8';
-  ctx.fillText('패배한 플레이어가 대환장 카드 1장을 선택합니다 · 중첩할수록 효과가 극적으로 진화합니다!', W / 2, 138);
+  ctx.fillText('특정 카드 2종을 조합하면 강력한 [시너지]가 각성합니다! · 중첩할수록 효과 진화', W / 2, 138);
   const cw = 360, ch = 520, gap = 50, x0 = W / 2 - (cw * 3 + gap * 2) / 2, cy0 = 175;
   for (let i = 0; i < 3; i++) {
     const id = G.choices[i], d = CARD_DEFS[id];
@@ -1577,48 +1778,55 @@ function drawCards() {
     ctx.restore();
   }
   ctx.globalAlpha = 1; ctx.textAlign = 'center'; ctx.font = `17px ${FONT}`; ctx.fillStyle = '#9aa0c8';
-  if (G.state === 'cards' && isMyPick) ctx.fillText('1 · 2 · 3 키로 바로 선택  /  ← → 로 이동 후 Space 또는 Enter 로 확정', W / 2, 758);
+  if (G.state === 'cards' && isMyPick) ctx.fillText('1 · 2 · 3 키로 바로 선택  /  ← → (A/D, J/L) 이동 후 Space 또는 Enter 로 확정', W / 2, 758);
 }
 
 function drawTitle() {
   ctx.fillStyle = 'rgba(4,5,16,0.82)'; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
   ctx.font = `900 80px ${FONT}`; ctx.lineWidth = 9; ctx.strokeStyle = '#000';
-  ctx.strokeText('탱크 라운즈 v4', W / 2, 210); ctx.fillStyle = '#ffd54f'; ctx.fillText('탱크 라운즈 v4', W / 2, 210);
+  ctx.strokeText('탱크 라운즈 v4', W / 2, 205); ctx.fillStyle = '#ffd54f'; ctx.fillText('탱크 라운즈 v4', W / 2, 205);
   ctx.font = `22px ${FONT}`; ctx.fillStyle = '#c8cbe8';
-  ctx.fillText('30종의 대환장 난장판 카드 · 중첩 진화 시스템 · 1R(50) → 2R(90) → 3R(120)!', W / 2, 260);
+  ctx.fillText('1:1 · 2:2 팀전 · 4인 난투 지원! · 30종 카드 & 8종 시너지 각성 · 10턴 서든데스!', W / 2, 255);
 
-  const modeBox = (x, idx, title, color, lines) => {
+  TITLE_BTNS.forEach((b, idx) => {
     const isHov = hoverTitleBtn === idx;
     ctx.save();
     if (isHov) {
-      ctx.translate(x + 205, 440);
+      ctx.translate(b.x + b.w / 2, b.y + b.h / 2);
       ctx.scale(1.03, 1.03);
-      ctx.translate(-(x + 205), -440);
+      ctx.translate(-(b.x + b.w / 2), -(b.y + b.h / 2));
     }
     ctx.fillStyle = isHov ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.08)';
-    rr(x, 310, 410, 260, 20); ctx.fill();
-    ctx.strokeStyle = color; ctx.lineWidth = isHov ? 5 : 3;
-    rr(x, 310, 410, 260, 20); ctx.stroke();
-    ctx.fillStyle = color; ctx.font = `900 30px ${FONT}`; ctx.fillText(title, x + 205, 360);
-    ctx.fillStyle = '#e6e8ff'; ctx.font = `18px ${FONT}`;
-    lines.forEach((l, i) => ctx.fillText(l, x + 205, 412 + i * 34));
+    rr(b.x, b.y, b.w, b.h, 20); ctx.fill();
+    ctx.strokeStyle = b.color; ctx.lineWidth = isHov ? 5 : 3;
+    rr(b.x, b.y, b.w, b.h, 20); ctx.stroke();
+    ctx.fillStyle = b.color; ctx.font = `900 26px ${FONT}`; ctx.fillText(b.title, b.x + b.w / 2, b.y + 52);
+    ctx.fillStyle = '#e6e8ff'; ctx.font = `17px ${FONT}`;
+    b.lines.forEach((l, i) => ctx.fillText(l, b.x + b.w / 2, b.y + 104 + i * 35));
     ctx.restore();
-  };
-  modeBox(W / 2 - 440, 0, '🖥️ 로컬 2인용 대전', '#4fc3f7', ['한 키보드로 친구와 나란히!', 'P1: WASD + Space', 'P2: 방향키 + Enter', '👉 클릭하여 바로 시작']);
-  modeBox(W / 2 + 30, 1, '🌐 온라인 멀티 대전', '#69f0ae', ['방 코드(4자리)로 원격 1:1 대전!', '학교/기관 와이파이 100% 통과', '방 만들기 또는 코드 입력 입장', '👉 클릭하여 멀티 창 열기']);
+  });
 
   ctx.font = `16px ${FONT}`; ctx.fillStyle = '#9aa0c8';
-  ctx.fillText(`원하는 모드를 마우스로 클릭하세요 · ${WINS_TO_MATCH}승 선취 시 최종 우승`, W / 2, 635);
+  ctx.fillText(`원하는 모드를 마우스로 클릭하세요 (단축키 1~4) · ${WINS_TO_MATCH}승 선취 시 최종 우승`, W / 2, 645);
 }
 
 function drawMatchOver() {
   ctx.fillStyle = 'rgba(4,5,16,0.8)'; ctx.fillRect(0, 0, W, H);
-  const w = players[G.winner];
   ctx.textAlign = 'center';
-  ctx.font = `900 80px ${FONT}`; ctx.lineWidth = 9; ctx.strokeStyle = '#000';
-  ctx.strokeText(`${w.name} 최종 우승!`, W / 2, 360); ctx.fillStyle = w.color; ctx.fillText(`${w.name} 최종 우승!`, W / 2, 360);
-  ctx.font = `bold 38px ${FONT}`; ctx.fillStyle = '#fff'; ctx.fillText(`${players[0].score} : ${players[1].score}`, W / 2, 425);
+  if (G.mode === '2v2') {
+    const teamName = G.winner === 0 ? '블루팀 (P1·P3)' : '레드팀 (P2·P4)';
+    const col = G.winner === 0 ? '#4fc3f7' : '#ff8a65';
+    ctx.font = `900 76px ${FONT}`; ctx.lineWidth = 9; ctx.strokeStyle = '#000';
+    ctx.strokeText(`${teamName} 최종 우승!`, W / 2, 360); ctx.fillStyle = col; ctx.fillText(`${teamName} 최종 우승!`, W / 2, 360);
+    ctx.font = `bold 38px ${FONT}`; ctx.fillStyle = '#fff'; ctx.fillText(`블루 ${G.teamScores[0]} : ${G.teamScores[1]} 레드`, W / 2, 425);
+  } else {
+    const w = players[G.winner];
+    ctx.font = `900 80px ${FONT}`; ctx.lineWidth = 9; ctx.strokeStyle = '#000';
+    ctx.strokeText(`${w.name} 최종 우승!`, W / 2, 360); ctx.fillStyle = w.color; ctx.fillText(`${w.name} 최종 우승!`, W / 2, 360);
+    const scTxt = players.length === 2 ? `${players[0].score} : ${players[1].score}` : players.map(p => `${p.name} ${p.score}승`).join('  |  ');
+    ctx.font = `bold 34px ${FONT}`; ctx.fillStyle = '#fff'; ctx.fillText(scTxt, W / 2, 425);
+  }
   if (G.stateT > 1) {
     ctx.globalAlpha = 0.55 + 0.45 * Math.sin(G.time * 4); ctx.font = `24px ${FONT}`;
     ctx.fillText((!Net.active || Net.isHost) ? 'Space 또는 Enter 로 새 게임' : '호스트가 새 게임을 시작하기를 기다리는 중...', W / 2, 510);
