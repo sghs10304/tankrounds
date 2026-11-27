@@ -3,7 +3,7 @@
 /* ============================ 온라인 멀티플레이 매니저 ============================
  * 1) 보안 웹소켓 MQTT 중계로 학교/기관 방화벽 통과
  * 2) 턴마다 시드(seed) 공유 + 소수점 정밀 발사 좌표
- * 3) 턴 종료 시 Host 권위 상태 확정(turnResult)으로 체력·생사·카드창 100% 일치
+ * 3) 턴 종료 시 Host 권위 상태 확정으로 체력·생사·카드창 100% 일치
  */
 const BROKER_URLS = [
   'wss://broker.emqx.io:8084/mqtt',
@@ -231,7 +231,7 @@ const Net = {
       document.getElementById('p2p-modal').style.display = 'none';
       canvas.focus();
       this.startHeartbeat();
-      startMatch();
+      startMatch('1v1');
       return;
     }
 
@@ -253,14 +253,14 @@ const Net = {
         this.remoteTarget = null;
         this.lastHandledFireSeq = -1;
         RNG.setSeed(msg.seed);
+        G.mode = '1v1';
         G.round = msg.round;
         G.turnCount = 0;
         G.nextFirst = msg.nextFirst;
         if (msg.biome) setBiome(msg.biome);
         Terrain.top.set(msg.terrainTop);
         Terrain.rebuild();
-        players[0].x = msg.p0x;
-        players[1].x = msg.p1x;
+        if (msg.px) msg.px.forEach((x, idx) => { if (players[idx]) players[idx].x = x; });
         resetPlayersForRound();
         G.crates = msg.crates;
         G.portals = msg.portals;
@@ -278,18 +278,16 @@ const Net = {
           G.shells.length = 0;
           G.fields.length = 0;
         }
-        // Host가 확정한 직전 턴 종료 체력 동기화
-        if (msg.hp0 !== undefined) syncAuthoritativeState(msg);
+        if (msg.states) syncAuthoritativeState(msg.states);
         beginTurn(msg.turn, msg.wind, msg.seed);
         break;
       }
       case 'roundEndSync': {
-        // Host가 라운드 종료 및 승패 확정
         this.remoteTarget = null;
         G.pending.length = 0;
         G.shells.length = 0;
         G.fields.length = 0;
-        syncAuthoritativeState(msg);
+        if (msg.states) syncAuthoritativeState(msg.states);
         if (G.state !== 'roundEnd' && G.state !== 'cards' && G.state !== 'matchOver') {
           endRound();
         }
@@ -333,7 +331,6 @@ const Net = {
             G.turn = msg.id;
             setState('aiming');
           }
-          // 발사 시드와 소수점 정밀 좌표를 그대로 복원해 100% 동일한 탄도 계산
           RNG.setSeed(msg.fireSeed);
           p.x = msg.x;
           p.y = msg.y;
@@ -345,7 +342,8 @@ const Net = {
       }
       case 'cardChoices': {
         G.choices = msg.choices;
-        G.cardLoser = msg.loser;
+        G.cardQueue = msg.queue || [msg.loser];
+        G.cardLoser = G.cardQueue[0];
         G.sel = 1;
         G.picked = -1;
         setState('cards');
@@ -365,7 +363,7 @@ const Net = {
         break;
       }
       case 'rematch': {
-        startMatch();
+        startMatch('1v1');
         break;
       }
     }
