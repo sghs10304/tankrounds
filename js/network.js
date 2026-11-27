@@ -9,7 +9,7 @@ const BROKER_URLS = [
   'wss://broker.emqx.io:8084/mqtt',
   'wss://broker.hivemq.com:8884/mqtt'
 ];
-const TOPIC_PREFIX = 'tankrounds/v5/room/';
+const TOPIC_PREFIX = 'tankrounds/v6/room/';
 
 const Net = {
   active: false,
@@ -83,7 +83,9 @@ const Net = {
       connectTimeout: 6000,
       reconnectPeriod: 0
     });
-    this.client.on('connect', () => {
+    const client = this.client;
+    client.on('connect', () => {
+      if (this.client !== client) return; // 연결 전에 창을 닫은 경우
       onReady();
     });
     this.client.on('message', (topic, payload) => {

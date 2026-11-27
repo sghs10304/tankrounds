@@ -586,6 +586,7 @@ function stepShell(s, dt) {
     if (px < 0 || px > W) { if (runImpact(s, { type: 'wall', side: px < 0 ? -1 : 1 })) return !s.dead; }
     else if (py >= 0 && Terrain.solid(px, py)) {
       const hit = { type: 'terrain' };
+      if (s.hops > 0 && bounceTerrain(s)) { s.hops--; return true; }
       if (runImpact(s, hit)) return !s.dead;
       detonate(s, hit); return false;
     }
@@ -615,20 +616,30 @@ function stepDrill(s, dt) {
   let remain = s.drillSpeed * dt;
   while (remain > 0) {
     const st = Math.min(3, remain); remain -= st;
-    s.x += s.dx * st; s.y += s.dy * st; s.drillLeft -= st; s.drillAcc += st;
+    // 땅속에서 가장 가까운 적을 향해 방향 전환
+    const e = enemyTank(s.owner, s.x, s.y);
+    if (e) {
+      const cur = Math.atan2(s.dy, s.dx);
+      let d = Math.atan2(e.y - 14 * e.stats.tankScale - s.y, e.x - s.x) - cur;
+      d = Math.atan2(Math.sin(d), Math.cos(d));
+      const na = cur + clamp(d, -0.022 * st, 0.022 * st);
+      s.dx = Math.cos(na); s.dy = Math.sin(na);
+    }
+    s.x += s.dx * st; s.y += s.dy * st; s.drillLeft -= st; s.drillDug += st; s.drillAcc += st;
+    s.damage = s.baseDamage * (1 + 0.4 * Math.min(1, s.drillDug / 220));
     for (const p of players) {
-      if (p.alive && hitsTank(s.x, s.y, s.r, p)) { Sfx.hit(); detonate(s, { type: 'tank', tank: p }); return false; }
+      if (p.alive && isHostile(s.owner, p) && hitsTank(s.x, s.y, s.r + 8, p)) { Sfx.hit(); detonate(s, { type: 'tank', tank: p }); return false; }
     }
     if (s.drillAcc >= 5) {
       s.drillAcc = 0;
       Terrain.carve(s.x, s.y, s.drillR);
-      P(s.x, s.y, fxRand(-60, 60), fxRand(-60, 20), { life: 0.5, size: 3, color: getDirtColors()[(Math.random() * 4) | 0], kind: 'debris', ground: true });
+      P(s.x, s.y, fxRand(-90, 90), fxRand(-120, 20), { life: 0.5, size: 3, color: getDirtColors()[(Math.random() * 4) | 0], kind: 'debris', ground: true });
     }
+    if (s.drillLeft <= 0 || s.y >= H - BEDROCK || s.x < 0 || s.x >= W) { detonate(s, { type: 'terrain' }); return false; }
     const lx = s.x + s.dx * (s.drillR + 3), ly = s.y + s.dy * (s.drillR + 3);
-    if (!Terrain.solid(lx, ly)) {
+    if (s.drillDug > 30 && !Terrain.solid(lx, ly)) {
       s.drilling = false; s.vx = s.dx * s.drillSpeed; s.vy = s.dy * s.drillSpeed; return true;
     }
-    if (s.drillLeft <= 0) { detonate(s, { type: 'terrain' }); return false; }
   }
   G.shake = Math.max(G.shake, 2.5);
   return true;
@@ -742,6 +753,19 @@ function updateFields(dt) {
   for (let i = G.fields.length - 1; i >= 0; i--) {
     const f = G.fields[i];
     f.t += dt;
+    if (f.type === 'duck') {
+      if (f.t < 0) continue;
+      const e = enemyTank(f.owner, f.x, f.y);
+      if (e) f.dir = e.x >= f.x ? 1 : -1;
+      f.x = clamp(f.x + f.dir * 190 * dt, 10, W - 10);
+      f.y = Terrain.h(f.x) - 9;
+      const reached = e && Math.abs(e.x - f.x) < 20 * e.stats.tankScale && Math.abs(e.y - f.y) < 50;
+      if (reached || f.t >= f.life) {
+        G.fields.splice(i, 1);
+        explode({ x: f.x, y: f.y, radius: 34, damage: f.damage }, f.owner);
+      }
+      continue;
+    }
     if (f.type === 'ufo') {
       const e = enemyTank(f.owner, f.x, f.y + 210);
       if (e && Math.abs(e.x - f.x) < f.R) {
@@ -826,10 +850,9 @@ const BLOCK_KEYS = new Set(['Space', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowU
 let hoverTitleBtn = -1;
 
 const TITLE_BTNS = [
-  { mode: '1v1', x: 80, y: 310, w: 335, h: 270, title: '⚔️ 로컬 1 : 1', color: '#4fc3f7', lines: ['1:1 클래식 듀얼', 'P1: WASD + Space', 'P2: 방향키 + Enter', '👉 클릭하여 시작'] },
-  { mode: '2v2', x: 445, y: 310, w: 335, h: 270, title: '🛡️ 로컬 2 : 2 팀전', color: '#ff8a65', lines: ['블루(P1·P3) vs 레드(P2·P4)', '팀원 간 아군 오사 면역', '패배 팀 전원 카드 선택!', '👉 클릭하여 시작'] },
-  { mode: 'ffa4', x: 810, y: 310, w: 335, h: 270, title: '👑 로컬 4인 난투', color: '#ffd54f', lines: ['1:1:1:1 최후의 1인전!', 'P3: IJKL+U / P4: 넘패드', '탈락한 3명 모두 카드 획득', '👉 클릭하여 시작'] },
-  { mode: 'online', x: 1175, y: 310, w: 345, h: 270, title: '🌐 온라인 멀티', color: '#69f0ae', lines: ['1:1 · 2:2 · 4인 난투', '4자리 방 코드 원격 대전', '실시간 궤적·카드 동기화', '👉 클릭하여 방 열기'] }
+  { mode: '1v1', x: 220, y: 310, w: 360, h: 270, title: '⚔️ 로컬 1 : 1', color: '#4fc3f7', lines: ['1:1 클래식 듀얼', 'P1: WASD + Space', 'P2: 방향키 + Enter', '👉 클릭하여 시작'] },
+  { mode: '2v2', x: 620, y: 310, w: 360, h: 270, title: '🛡️ 로컬 2 : 2 팀전', color: '#ff8a65', lines: ['블루(P1·P3) vs 레드(P2·P4)', '팀원 간 아군 오사 면역', '패배 팀 전원 카드 선택!', '👉 클릭하여 시작'] },
+  { mode: 'online', x: 1020, y: 310, w: 360, h: 270, title: '🌐 온라인 멀티', color: '#69f0ae', lines: ['1:1 · 2:2 · 4인 난투', '4자리 방 코드 원격 대전', '실시간 궤적·카드 동기화', '👉 클릭하여 방 열기'] }
 ];
 
 function getCanvasCoords(clientX, clientY) {
@@ -840,7 +863,22 @@ function getCanvasCoords(clientX, clientY) {
   };
 }
 
+function cardAt(e) {
+  if (G.state !== 'cards' || G.stateT < 0.5 || (Net.active && G.cardLoser !== Net.myId)) return -1;
+  const { x, y } = getCanvasCoords(e.clientX, e.clientY);
+  for (let i = 0; i < 3; i++) if (x >= cardX(i) && x <= cardX(i) + CARD_W && y >= CARD_Y && y <= CARD_Y + CARD_H) return i;
+  return -1;
+}
 canvas.addEventListener('mousemove', e => {
+  if (G.state === 'cards') {
+    const i = cardAt(e);
+    canvas.style.cursor = i !== -1 ? 'pointer' : 'default';
+    if (i !== -1 && i !== G.sel) {
+      G.sel = i; Sfx.cardMove();
+      if (Net.active) Net.send({ type: 'cardSelect', sel: i });
+    }
+    return;
+  }
   if (G.state !== 'title') {
     if (hoverTitleBtn !== -1) { hoverTitleBtn = -1; canvas.style.cursor = 'default'; }
     return;
@@ -856,6 +894,11 @@ canvas.addEventListener('mousemove', e => {
 
 canvas.addEventListener('click', e => {
   Sfx.init();
+  if (G.state === 'cards') {
+    const i = cardAt(e);
+    if (i !== -1) { canvas.style.cursor = 'default'; pickCard(i); }
+    return;
+  }
   if (G.state !== 'title') return;
   const { x, y } = getCanvasCoords(e.clientX, e.clientY);
   for (const b of TITLE_BTNS) {
@@ -920,8 +963,7 @@ function onKeyDown(code) {
     case 'title': {
       if (code === 'Digit1' || code === 'Numpad1') { Net.active = false; startMatch('1v1'); }
       else if (code === 'Digit2' || code === 'Numpad2') { Net.active = false; startMatch('2v2'); }
-      else if (code === 'Digit3' || code === 'Numpad3') { Net.active = false; startMatch('ffa4'); }
-      else if (code === 'Digit4' || code === 'Numpad4') { Net.openModal(); }
+      else if (code === 'Digit3' || code === 'Numpad3') { Net.openModal(); }
       break;
     }
     case 'aiming': {
@@ -1135,6 +1177,13 @@ function update(raw) {
   G.timeScale = (G.state === 'roundEnd' && G.stateT < 1.2) ? 0.3 : 1;
   const dt = raw * G.timeScale;
   G.stateT += raw;
+  // 조준 중 사망(서든데스·독·지뢰)하거나 승패가 정해지면 결과 처리 단계로 전환
+  if (G.state === 'aiming' && (!players[G.turn].alive || checkRoundOver())) {
+    Sfx.chargeStop();
+    players[G.turn].charging = false;
+    G.resolveT = 0; G.settleT = 0;
+    setState('resolving');
+  }
   if (G.state === 'aiming') updateActivePlayer(dt);
   updateWindStreaks(dt);
   updateFields(dt);
@@ -1154,7 +1203,7 @@ function update(raw) {
           G.pending.splice(i, 1);
           if (q.custom) {
             const c = q.custom;
-            G.shells.push(makeShell(q.owner, c.x, c.y, c.vx, c.vy, { damage: c.damage, radius: c.radius, child: true, r: 3.5 }));
+            G.shells.push(makeShell(q.owner, c.x, c.y, c.vx, c.vy, { damage: c.damage, radius: c.radius, child: true, r: 3.5, icon: c.icon }));
           } else if (q.chainBoom) {
             const cb = q.chainBoom;
             explode({ x: cb.x, y: Terrain.h(cb.x), radius: cb.radius, damage: cb.damage }, q.owner);
@@ -1463,6 +1512,16 @@ function drawMinesAndPoisons() {
 }
 
 function drawField(f) {
+  if (f.type === 'duck') {
+    if (f.t < 0) return;
+    ctx.save();
+    ctx.translate(f.x, f.y - Math.abs(Math.sin(f.t * 16)) * 4);
+    ctx.scale(-f.dir, 1);
+    ctx.font = `24px ${FONT}`; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+    ctx.fillText('🦆', 0, 6);
+    ctx.restore();
+    return;
+  }
   if (f.type === 'ufo') {
     ctx.save();
     ctx.translate(f.x, f.y);
@@ -1506,6 +1565,13 @@ function drawShell(s) {
   ctx.fillStyle = s.isLava ? '#ff3d00' : (s.child ? '#ffd180' : '#ffffff');
   ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, TAU); ctx.fill();
   ctx.strokeStyle = s.owner.color; ctx.lineWidth = 2; ctx.stroke();
+  if (s.icon) {
+    ctx.translate(s.x, s.y); ctx.rotate(s.age * 8);
+    ctx.font = `24px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+    ctx.fillText(s.icon, 0, 0);
+    ctx.restore();
+    return;
+  }
   if (s.drilling) {
     ctx.translate(s.x, s.y); ctx.rotate(Math.atan2(s.dy, s.dx));
     ctx.fillStyle = '#cfd8dc'; ctx.beginPath(); ctx.moveTo(s.r + 9, 0); ctx.lineTo(-2, -s.r - 2); ctx.lineTo(-2, s.r + 2); ctx.closePath(); ctx.fill();
@@ -1748,48 +1814,157 @@ function drawBanner() {
   ctx.restore();
 }
 
+/* 카드 선택창: 무거운 그라데이션·글로우는 오프스크린에 한 번만 그리고 매 프레임 복사 */
+const CARD_W = 360, CARD_H = 520, CARD_GAP = 50, CARD_PAD = 40, CARD_Y = 175;
+const cardX = i => W / 2 - (CARD_W * 3 + CARD_GAP * 2) / 2 + i * (CARD_W + CARD_GAP);
+const faceCache = new Map(), glowCache = new Map();
+
+function makeLayer(w, h) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  return [c, c.getContext('2d')];
+}
+function roundPath(x, px, py, w, h, r) {
+  x.beginPath(); x.roundRect(px, py, w, h, r);
+}
+function getCardGlow(color) {
+  let c = glowCache.get(color);
+  if (c) return c;
+  const [cv, x] = makeLayer(CARD_W + CARD_PAD * 2, CARD_H + CARD_PAD * 2);
+  x.shadowColor = color; x.shadowBlur = 36; x.fillStyle = color;
+  roundPath(x, CARD_PAD, CARD_PAD, CARD_W, CARD_H, 24); x.fill(); x.fill();
+  glowCache.set(color, cv);
+  return cv;
+}
+function getCardFace(id, have) {
+  const key = id + ':' + have;
+  let c = faceCache.get(key);
+  if (c) return c;
+  const d = CARD_DEFS[id];
+  const [cv, x] = makeLayer(CARD_W, CARD_H);
+  const mid = CARD_W / 2;
+  const bg = x.createLinearGradient(0, 0, 0, CARD_H);
+  bg.addColorStop(0, '#282c5c'); bg.addColorStop(0.5, '#171937'); bg.addColorStop(1, '#0b0c1e');
+  x.fillStyle = bg; roundPath(x, 0, 0, CARD_W, CARD_H, 24); x.fill();
+
+  // 아트 영역: 방사형 광원 + 햇살 무늬
+  x.save();
+  roundPath(x, 14, 14, CARD_W - 28, 214, 16); x.clip();
+  x.fillStyle = shade(d.color, -0.72); x.fillRect(0, 0, CARD_W, 240);
+  x.translate(mid, 125);
+  x.fillStyle = d.color; x.globalAlpha = 0.13;
+  for (let k = 0; k < 16; k++) {
+    x.beginPath(); x.moveTo(0, 0);
+    x.arc(0, 0, 300, k * TAU / 16, k * TAU / 16 + TAU / 34); x.closePath(); x.fill();
+  }
+  x.globalAlpha = 1;
+  const halo = x.createRadialGradient(0, 0, 5, 0, 0, 135);
+  halo.addColorStop(0, d.color); halo.addColorStop(1, 'rgba(0,0,0,0)');
+  x.globalAlpha = 0.7; x.fillStyle = halo; x.fillRect(-180, -140, 360, 280);
+  x.restore();
+
+  x.textAlign = 'center';
+  // 테두리 (이중)
+  x.strokeStyle = d.color; x.lineWidth = 4; roundPath(x, 2, 2, CARD_W - 4, CARD_H - 4, 22); x.stroke();
+  x.strokeStyle = 'rgba(255,255,255,0.18)'; x.lineWidth = 1.5; roundPath(x, 10, 10, CARD_W - 20, CARD_H - 20, 17); x.stroke();
+  // 분류 배지
+  const tag = d.cat + (d.curse ? '  ⚠ 하이리스크' : '');
+  x.font = `bold 14px ${FONT}`;
+  const tw = x.measureText(tag).width + 26;
+  x.fillStyle = 'rgba(5,6,20,0.75)'; roundPath(x, 24, 26, tw, 28, 14); x.fill();
+  x.fillStyle = d.color; x.fillText(tag, 24 + tw / 2, 45);
+  // 아이콘
+  x.font = `108px ${FONT}`; x.fillStyle = '#fff'; x.fillText(d.icon, mid, 170);
+  // 이름 리본
+  x.fillStyle = d.color;
+  x.beginPath(); x.moveTo(8, 238); x.lineTo(CARD_W - 8, 238); x.lineTo(CARD_W - 28, 266); x.lineTo(CARD_W - 8, 294); x.lineTo(8, 294); x.lineTo(28, 266); x.closePath(); x.fill();
+  x.font = `900 30px ${FONT}`; x.lineWidth = 6; x.strokeStyle = 'rgba(0,0,0,0.65)'; x.lineJoin = 'round';
+  x.strokeText(d.name, mid, 277); x.fillStyle = '#fff'; x.fillText(d.name, mid, 277);
+  // 설명 (폭이 넘치면 자동 축소)
+  d.desc.forEach((line, k) => {
+    x.fillStyle = 'rgba(255,255,255,0.06)'; roundPath(x, 24, 316 + k * 48, CARD_W - 48, 40, 10); x.fill();
+    x.font = `${k ? 'bold ' : ''}17px ${FONT}`; x.fillStyle = k ? '#ffd54f' : '#e3e6ff';
+    x.fillText(line, mid, 342 + k * 48, CARD_W - 62);
+  });
+  x.font = `bold 16px ${FONT}`; x.fillStyle = have ? '#69f0ae' : '#9aa0c8';
+  x.fillText(have ? `⚡ Lv.${have} → Lv.${have + 1} 진화!` : '✨ 신규 획득', mid, CARD_H - 76);
+  faceCache.set(key, cv);
+  return cv;
+}
+
+// 이 카드를 고르면 새로 각성하는 시너지
+function newSynergyFor(p, id) {
+  if (p.cards.includes(id)) return null;
+  return SYNERGY_DEFS.find(s => s.req.includes(id) && s.req.every(r => r === id || p.cards.includes(r))) || null;
+}
+
 function drawCards() {
-  ctx.fillStyle = 'rgba(4,5,16,0.78)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(4,5,16,0.86)'; ctx.fillRect(0, 0, W, H);
+  const picking = G.state === 'cardPicked';
   const loser = players[G.cardLoser];
   const isMyPick = !Net.active || G.cardLoser === Net.myId;
   const remainCnt = G.cardQueue.length;
+
+  // 떠오르는 불티 (배열 생성 없이 시간으로 위치 계산)
+  ctx.fillStyle = loser.color;
+  for (let i = 0; i < 36; i++) {
+    const y = H - ((G.time * (28 + (i % 7) * 11) + i * 173) % H);
+    ctx.globalAlpha = 0.15 + (i % 4) * 0.1;
+    ctx.fillRect((i * 271) % W + Math.sin(G.time + i) * 22, y, 3 + (i % 3), 3 + (i % 3));
+  }
+  ctx.globalAlpha = 1;
+
   ctx.textAlign = 'center';
-  ctx.font = `900 44px ${FONT}`; ctx.fillStyle = loser.color;
-  ctx.fillText(isMyPick ? `${loser.name} 카드를 고르세요!${remainCnt > 1 ? ` (대기 ${remainCnt}명)` : ''}` : `${loser.name}님이 카드를 고르는 중...`, W / 2, 100);
-  ctx.font = `18px ${FONT}`; ctx.fillStyle = '#b8bcd8';
+  ctx.font = `900 46px ${FONT}`; ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+  const head = isMyPick ? `${loser.name} 카드를 고르세요!${remainCnt > 1 ? ` (대기 ${remainCnt}명)` : ''}` : `${loser.name}님이 카드를 고르는 중...`;
+  ctx.strokeText(head, W / 2, 98); ctx.fillStyle = loser.color; ctx.fillText(head, W / 2, 98);
+  ctx.font = `18px ${FONT}`; ctx.fillStyle = '#c8ccec';
   ctx.fillText('특정 카드 2종을 조합하면 강력한 [시너지]가 각성합니다! · 중첩할수록 효과 진화', W / 2, 138);
-  const cw = 360, ch = 520, gap = 50, x0 = W / 2 - (cw * 3 + gap * 2) / 2, cy0 = 175;
+
+  const counts = countCards(loser);
   for (let i = 0; i < 3; i++) {
     const id = G.choices[i], d = CARD_DEFS[id];
-    const have = countCards(loser)[id] || 0;
-    const picking = G.state === 'cardPicked';
-    let sc = 1, alpha = 1; const sel = i === G.sel;
-    if (picking) { if (i === G.picked) sc = 1.06 + 0.2 * Math.min(1, G.stateT / 0.4); else alpha = Math.max(0, 1 - G.stateT * 3); }
-    else if (sel) sc = 1.05 + 0.012 * Math.sin(G.time * 6);
+    const sel = i === G.sel;
+    // 등장 애니메이션: 순서대로 아래에서 올라오며 뒤집힘
+    const k = picking ? 1 : clamp((G.stateT - i * 0.09) / 0.38, 0, 1);
+    const ease = 1 - (1 - k) ** 3;
+    let sc = sel ? 1.06 : 0.97, alpha = ease, lift = sel ? -10 + Math.sin(G.time * 3) * 4 : 0;
+    if (picking) {
+      if (i === G.picked) sc = 1.06 + 0.16 * Math.min(1, G.stateT / 0.35);
+      else { alpha = Math.max(0, 1 - G.stateT * 3); lift = G.stateT * 160; }
+    }
+    if (alpha <= 0) continue;
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.translate(x0 + i * (cw + gap) + cw / 2, cy0 + ch / 2); ctx.scale(sc, sc);
-    ctx.fillStyle = '#1b1d3c'; rr(-cw / 2, -ch / 2, cw, ch, 22); ctx.fill();
-    ctx.lineWidth = sel ? 5 : 2; ctx.strokeStyle = d.color; rr(-cw / 2, -ch / 2, cw, ch, 22); ctx.stroke();
-    ctx.fillStyle = d.color; ctx.globalAlpha = alpha * 0.22; rr(-cw / 2 + 10, -ch / 2 + 10, cw - 20, 190, 16); ctx.fill(); ctx.globalAlpha = alpha;
-    ctx.font = `bold 14px ${FONT}`; ctx.textAlign = 'left'; ctx.fillStyle = d.color;
-    ctx.fillText(d.cat + (d.curse ? '  ⚠ 하이리스크' : ''), -cw / 2 + 24, -ch / 2 + 34);
-    ctx.textAlign = 'center';
-    ctx.font = `104px ${FONT}`; ctx.fillStyle = '#fff'; ctx.fillText(d.icon, 0, -ch / 2 + 150);
-    ctx.font = `bold 32px ${FONT}`; ctx.fillText(d.name, 0, -ch / 2 + 252);
-    ctx.font = `18px ${FONT}`; ctx.fillStyle = '#cfd3f2';
-    d.desc.forEach((line, k) => {
-      ctx.fillStyle = k === 1 ? '#ffd54f' : '#cfd3f2';
-      ctx.fillText(line, 0, -ch / 2 + 306 + k * 34);
-    });
-    ctx.font = `bold 16px ${FONT}`; ctx.fillStyle = have ? '#69f0ae' : '#7f84a8';
-    ctx.fillText(have ? `⚡ Lv.${have} → Lv.${have + 1} 극적 진화!` : '✨ 신규 획득', 0, ch / 2 - 70);
-    ctx.fillStyle = sel ? d.color : 'rgba(255,255,255,0.12)'; ctx.beginPath(); ctx.arc(0, ch / 2 - 32, 19, 0, TAU); ctx.fill();
-    ctx.font = `bold 20px ${FONT}`; ctx.fillStyle = sel ? '#111' : '#aab'; ctx.fillText(String(i + 1), 0, ch / 2 - 25);
+    ctx.translate(cardX(i) + CARD_W / 2, CARD_Y + CARD_H / 2 + lift + (1 - ease) * 220);
+    ctx.scale(sc * Math.max(0.05, ease), sc);
+    const L = -CARD_W / 2, T = -CARD_H / 2;
+    if (sel) {
+      ctx.globalAlpha = alpha * (0.65 + 0.25 * Math.sin(G.time * 5));
+      ctx.drawImage(getCardGlow(d.color), L - CARD_PAD, T - CARD_PAD);
+      ctx.globalAlpha = alpha;
+    }
+    ctx.drawImage(getCardFace(id, counts[id] || 0), L, T);
+    if (sel) {
+      // 선택 카드 위를 지나가는 광택
+      const sx = L - 160 + ((G.time * 0.7) % 1.6) * (CARD_W + 260);
+      ctx.save();
+      roundPath(ctx, L, T, CARD_W, CARD_H, 24); ctx.clip();
+      ctx.globalAlpha = alpha * 0.09; ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.moveTo(sx, T); ctx.lineTo(sx + 60, T); ctx.lineTo(sx - 50, -T); ctx.lineTo(sx - 110, -T); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+    const syn = newSynergyFor(loser, id);
+    if (syn && !picking) {
+      ctx.fillStyle = syn.color; roundPath(ctx, -135, T + 421, 270, 34, 17); ctx.fill();
+      ctx.font = `900 16px ${FONT}`; ctx.fillStyle = '#0b0c1e';
+      ctx.fillText(`${syn.icon} ${syn.name} 각성 가능!`, 0, T + 444);
+    }
+    ctx.fillStyle = sel ? d.color : '#2c2f55'; ctx.beginPath(); ctx.arc(0, -T - 34, 19, 0, TAU); ctx.fill();
+    ctx.font = `bold 20px ${FONT}`; ctx.fillStyle = sel ? '#111' : '#c8ccec'; ctx.fillText(String(i + 1), 0, -T - 27);
     ctx.restore();
   }
   ctx.globalAlpha = 1; ctx.textAlign = 'center'; ctx.font = `17px ${FONT}`; ctx.fillStyle = '#9aa0c8';
-  if (G.state === 'cards' && isMyPick) ctx.fillText('1 · 2 · 3 키로 바로 선택  /  ← → (A/D, J/L) 이동 후 Space 또는 Enter 로 확정', W / 2, 758);
+  if (G.state === 'cards' && isMyPick) ctx.fillText('카드 클릭  /  1 · 2 · 3 키  /  ← → (A/D, J/L) 이동 후 Space 또는 Enter', W / 2, 758);
 }
 
 function drawTitle() {
@@ -1798,7 +1973,7 @@ function drawTitle() {
   ctx.font = `900 80px ${FONT}`; ctx.lineWidth = 9; ctx.strokeStyle = '#000';
   ctx.strokeText('탱크 라운즈 v5', W / 2, 205); ctx.fillStyle = '#ffd54f'; ctx.fillText('탱크 라운즈 v5', W / 2, 205);
   ctx.font = `22px ${FONT}`; ctx.fillStyle = '#c8cbe8';
-  ctx.fillText('1:1 · 2:2 팀전 · 4인 난투 지원! · 35종 카드 & 12종 시너지 각성 · 10턴 서든데스!', W / 2, 255);
+  ctx.fillText('1:1 · 2:2 팀전 · 온라인 4인 난투! · 39종 카드 & 12종 시너지 각성 · 10턴 서든데스!', W / 2, 255);
 
   TITLE_BTNS.forEach((b, idx) => {
     const isHov = hoverTitleBtn === idx;
@@ -1819,7 +1994,7 @@ function drawTitle() {
   });
 
   ctx.font = `16px ${FONT}`; ctx.fillStyle = '#9aa0c8';
-  ctx.fillText(`원하는 모드를 마우스로 클릭하세요 (단축키 1~4) · ${WINS_TO_MATCH}승 선취 시 최종 우승`, W / 2, 645);
+  ctx.fillText(`원하는 모드를 마우스로 클릭하세요 (단축키 1~3) · ${WINS_TO_MATCH}승 선취 시 최종 우승`, W / 2, 645);
 }
 
 function drawMatchOver() {

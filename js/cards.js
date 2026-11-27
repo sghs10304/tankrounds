@@ -25,7 +25,7 @@ function newStats() {
     synStorm: false, synApocalypse: false, synSupernova: false, synRailgun: false,
     synVampire: false, synGatling: false, synTimeFreeze: false, synVoid: false,
     synFortress: false, synRam: false, synNitro: false, synTyphoon: false,
-    armor: 0, repair: 0, knockback: 0,
+    armor: 0, repair: 0, knockback: 0, swap: 0, duck: 0, anvil: 0, banana: 0,
     hooks: { onFire: [], onUpdate: [], onApex: [], onImpact: [], onDetonate: [], onExplode: [], onTurnStart: [] },
   };
 }
@@ -195,9 +195,9 @@ function hookDrill(s, hit, owner) {
   const sp = Math.hypot(s.vx, s.vy) || 1;
   const mult = owner.stats.synRailgun ? 1.6 : 1.0;
   s.drilling = true; s.drilled = true;
-  s.drillSpeed = clamp(sp * 0.58 * mult, 360, 820); s.dx = s.vx / sp; s.dy = s.vy / sp;
+  s.drillSpeed = clamp(sp * 0.7 * mult, 520, 900); s.drillDug = 0; s.baseDamage = s.damage; s.dx = s.vx / sp; s.dy = s.vy / sp;
   s.drillLeft = owner.stats.drill * (s.child ? 0.6 : 1);
-  s.drillR = 15 + Math.floor(owner.stats.drill / 170) * 4;
+  s.drillR = 13 + Math.floor(owner.stats.drill / 300) * 4;
   s.drillAcc = 99;
   Sfx.drill();
   return true;
@@ -328,27 +328,23 @@ function hookJackpot(s, owner) {
   }
 }
 function hookWormhole(s, owner) {
-  if (s.wormholed) return;
+  if (s.dead || s.wormholed) return;
   if (s.child && !owner.stats.synVoid) return;
-  s.wormholed = true;
   const lv = owner.stats.wormhole;
   const e = enemyTank(owner, s.x, s.y);
-  const targetX = e ? clamp(e.x + rand(-55, 55), 50, W - 50) : clamp(W - owner.x, 50, W - 50);
+  // 최고점이 적과 가로로 가까워야 발동 (직접 조준 필요)
+  if (!e || Math.abs(e.x - s.x) > Math.min(420, 220 + lv * 40)) return;
+  s.wormholed = true;
+  const miss = Math.max(70, 130 - lv * 15);
+  const targetX = clamp(e.x + rand(-miss, miss), 50, W - 50);
   G.rings.push({ x: s.x, y: s.y, max: 55, t: 0, life: 0.35, color: '0,229,255' });
   s.x = targetX;
-  s.y = 75;
+  s.y = Math.min(s.y, 140);
   s.vx = G.wind * 1.5;
-  s.vy = 420 + lv * 60;
+  s.vy = 260;
+  s.damage *= Math.min(0.85, 0.6 + lv * 0.1);
   G.rings.push({ x: s.x, y: s.y, max: 65, t: 0, life: 0.4, color: '213,0,249' });
   Sfx.portal();
-  if (!s.child) {
-    for (let i = 1; i < lv; i++) {
-      const ox = clamp(targetX + (i % 2 === 1 ? 45 : -45) * Math.ceil(i / 2), 40, W - 40);
-      G.shells.push(makeShell(owner, ox, 65, G.wind * 1.5, 420 + lv * 60, {
-        r: s.r * 0.8, damage: 12 + lv * 3, radius: s.radius * 0.75, child: true, apex: true, age: 0.3
-      }));
-    }
-  }
 }
 function hookMagnet(s, dt, owner) {
   const lv = owner.stats.magnet;
@@ -376,7 +372,6 @@ function hookMirror(s, owner) {
     const clone = makeShell(owner, s.x, s.y, Math.cos(baseAng) * spd, Math.sin(baseAng) * spd, {
       r: s.r * 0.85, damage: 14 + lv * 3, radius: s.radius * 0.8, child: true, age: 0.1, bouncesLeft: s.bouncesLeft
     });
-    if (owner.stats.synVoid) hookWormhole(clone, owner);
     G.shells.push(clone);
   }
   G.floaters.push({ x: owner.x, y: owner.y - 65, text: `🪞 거울 분신 ×${lv + 1}!`, color: '#80d8ff', t: 0, life: 1.0 });
@@ -440,6 +435,50 @@ function hookKnockback(ctx_, owner) {
   G.rings.push({ x: ctx_.x, y: ctx_.y, max: range, t: 0, life: 0.4, color: '255,171,145' });
 }
 
+function hookSwap(ctx_, owner) {
+  if (ctx_.shell.child || !owner.alive) return;
+  const lv = owner.stats.swap;
+  const e = enemyTank(owner, ctx_.x, ctx_.y);
+  if (!e || Math.hypot(e.x - ctx_.x, (e.y - 15) - ctx_.y) > 110 + lv * 30) return;
+  const ox = owner.x, oy = owner.y;
+  for (const [t, x, y] of [[owner, e.x, e.y], [e, ox, oy]]) {
+    t.x = x; t.y = y - 4; t.vx = 0; t.vy = 0; t.air = true; t.lastX = x;
+    G.rings.push({ x, y: y - 16, max: 90, t: 0, life: 0.5, color: '124,77,255' });
+  }
+  Sfx.portal();
+  G.floaters.push({ x: e.x, y: e.y - 75, text: '🔄 자리 바꾸기!', color: '#b388ff', t: 0, life: 1.4 });
+  damageTank(e, 6 + lv * 6, '#b388ff', owner);
+}
+function hookDuck(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.duck;
+  const count = 2 + lv;
+  for (let i = 0; i < count; i++) {
+    G.fields.push({ type: 'duck', x: clamp(ctx_.x + (i - (count - 1) / 2) * 34, 12, W - 12), y: ctx_.y, owner, t: -i * 0.12, life: 2.4, damage: 7 + lv * 2, dir: 1 });
+  }
+  G.floaters.push({ x: ctx_.x, y: ctx_.y - 55, text: '🦆 꽥꽥 돌격대!', color: '#ffee58', t: 0, life: 1.2 });
+}
+function hookAnvil(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.anvil;
+  for (let i = 0; i < lv; i++) {
+    G.pending.push({
+      t: 0.55 + i * 0.25, owner,
+      custom: { x: clamp(ctx_.x + i * (i % 2 ? 30 : -30), 20, W - 20), y: -40, vx: -G.wind * 1.5, vy: 560, damage: 24, radius: 34, icon: '⚒️' }
+    });
+  }
+}
+function hookBanana(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const count = 2 + owner.stats.banana;
+  for (let i = 0; i < count; i++) {
+    G.shells.push(makeShell(owner, ctx_.x, ctx_.y - 14, (i - (count - 1) / 2) * 110 + rand(-30, 30), rand(-430, -330), {
+      r: 7, damage: 9, radius: 32, child: true, apex: true, age: 0.3, hops: 1, icon: '🍌'
+    }));
+  }
+  Sfx.pop();
+}
+
 const CARD_DEFS = {
   cluster: {
     icon: '🎆', name: '공중 분열탄', short: '분열', cat: '탄환 변형', color: '#f06292',
@@ -473,8 +512,8 @@ const CARD_DEFS = {
   },
   drill: {
     icon: '🔩', name: '드릴 관통탄', short: '드릴', cat: '탄환 변형', color: '#b0bec5',
-    desc: ['땅속을 파고들며 터널 굴착 후 폭발', '★시너지(저격): 초전자 레일건 고속관통'],
-    apply(s) { s.drill += 170; addHook(s, 'onImpact', hookDrill); }
+    desc: ['땅속에서 적을 추적해 파고든 뒤 폭발', '파고들수록 위력 최대 +40%'],
+    apply(s) { s.drill += 300; addHook(s, 'onImpact', hookDrill); }
   },
   terraform: {
     icon: '⛰️', name: '대지 융기', short: '융기', cat: '지형 제어', color: '#a1887f',
@@ -563,8 +602,8 @@ const CARD_DEFS = {
   },
   wormhole: {
     icon: '🌀', name: '차원의 웜홀', short: '웜홀', cat: '신규 대환장', color: '#d500f9',
-    desc: ['발사 즉시 적 머리 위 차원문으로 수직 낙하', '★시너지(분신): 모든 분신탄까지 웜홀 낙하'],
-    apply(s) { s.wormhole += 1; addHook(s, 'onFire', hookWormhole); }
+    desc: ['최고점이 적 근처면 적 상공으로 순간이동', '오차 있음 · 웜홀 통과 시 피해 30% 감소'],
+    apply(s) { s.wormhole += 1; addHook(s, 'onApex', hookWormhole); }
   },
   magnet: {
     icon: '🧲', name: '초전도 자석탄', short: '자석탄', cat: '신규 대환장', color: '#ff4081',
@@ -615,6 +654,26 @@ const CARD_DEFS = {
     icon: '👊', name: '충격파탄', short: '충격파', cat: '기본 강화', color: '#ff8a65',
     desc: ['착탄 시 주변 적을 밀쳐내고 추가 피해', '★시너지(철갑·회오리): 융합 2종 가능'],
     apply(s) { s.knockback += 1; addHook(s, 'onExplode', hookKnockback); }
+  },
+  swap: {
+    icon: '🔄', name: '자리 바꾸기탄', short: '자리교환', cat: '장난 카드', color: '#b388ff',
+    desc: ['적 근처에 맞히면 서로 위치를 교환', '★중첩: 발동 범위·추가 피해 증가'],
+    apply(s) { s.swap += 1; addHook(s, 'onExplode', hookSwap); }
+  },
+  duck: {
+    icon: '🦆', name: '오리 돌격대', short: '오리', cat: '장난 카드', color: '#ffee58',
+    desc: ['착탄 후 오리들이 적에게 걸어가 자폭', '★중첩: 오리 수·폭발 피해 증가'],
+    apply(s) { s.duck += 1; addHook(s, 'onExplode', hookDuck); }
+  },
+  anvil: {
+    icon: '⚒️', name: '하늘에서 모루', short: '모루', cat: '장난 카드', color: '#b0bec5',
+    desc: ['착탄 지점에 잠시 후 묵직한 모루 낙하', '★중첩: 떨어지는 모루 개수 증가'],
+    apply(s) { s.anvil += 1; addHook(s, 'onExplode', hookAnvil); }
+  },
+  banana: {
+    icon: '🍌', name: '통통 바나나', short: '바나나', cat: '장난 카드', color: '#ffd600',
+    desc: ['폭발하면 바나나 3개가 튀어올라 연쇄 폭발', '★중첩: 바나나 개수 증가'],
+    apply(s) { s.banana += 1; addHook(s, 'onExplode', hookBanana); }
   },
 };
 
