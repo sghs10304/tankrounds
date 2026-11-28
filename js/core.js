@@ -158,6 +158,15 @@ const Sfx = (() => {
 
 /* ============================ 4. 지형 엔진 ============================ */
 const BIOME_DEFS = {
+  moon: {
+    name: '달 표면 (저중력)', icon: '🌕',
+    sky: ['#000005', '#050512', '#0d0e24', '#1c1d38'],
+    mtn: ['#2b2d3d', '#1b1c28'],
+    dirt: ['#a7a9b4', '#6b6d78', '#33343c'],
+    crust: ['#8b8e9c', '#c7c9d3', '#f1f2f7'],
+    debris: ['#a7a9b4', '#6b6d78', '#d5d7de'],
+    speedMult: 0.95, fuelMult: 0.8, slide: 0, gravMult: 0.52
+  },
   grass: {
     name: '초원 평원', icon: '🌿',
     sky: ['#070b24', '#1d1f4a', '#5a3466', '#c4627a'],
@@ -215,6 +224,17 @@ const Terrain = {
   mask: new Uint8Array(W * H),
   cv: document.createElement('canvas'),
   biome: 'grass',
+  steel: [], // 파괴 불가 블록
+  isSteel(x, y) {
+    return this.steel.some(b => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h);
+  },
+  applySteel(x0 = 0, x1 = W - 1) {
+    for (const b of this.steel) {
+      if (b.x > x1 || b.x + b.w < x0) continue;
+      for (let y = b.y; y < b.y + b.h && y < H; y++) this.mask.fill(1, y * W + b.x, y * W + b.x + b.w);
+      drawSteelBlock(this.c, b);
+    }
+  },
   init() {
     this.cv.width = W; this.cv.height = H;
     this.c = this.cv.getContext('2d');
@@ -268,6 +288,8 @@ const Terrain = {
     line(1, b.crust[0], 9); line(-0.5, b.crust[1], 5); line(-2.5, b.crust[2], 1.5);
     c.fillStyle = '#262a38'; c.fillRect(0, H - BEDROCK, W, BEDROCK);
     c.fillStyle = '#3a3e50'; c.fillRect(0, H - BEDROCK, W, 3);
+    this.applySteel();
+    this.recompute(0, W - 1);
   },
   solid(x, y) {
     x = x | 0; y = y | 0;
@@ -313,6 +335,7 @@ const Terrain = {
     c.fillStyle = '#000';
     c.beginPath(); c.arc(cx, cy, r, 0, TAU); c.fill();
     c.restore();
+    this.applySteel(x0, x1);
     this.recompute(x0, x1);
   },
   raise(cx, cy, r) {
@@ -331,6 +354,7 @@ const Terrain = {
       c.drawImage(this.dirt, x, yTop, 1, yBot - yTop + 1, x, yTop, 1, yBot - yTop + 1);
       c.fillStyle = 'rgba(190,150,100,0.75)'; c.fillRect(x, yTop, 1, 2);
     }
+    this.applySteel(x0, x1);
     this.recompute(x0, x1);
   },
 };

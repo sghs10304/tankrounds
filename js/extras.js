@@ -27,32 +27,41 @@ const DEAL_COSTS = {
 };
 const DEAL_CHANCE = 0.16;
 
-function rollCard(exclude) {
+// 패배자 컴백 보너스 확률 (합계 100)
+const COMEBACK_WEIGHTS = { common: 24, rare: 42, epic: 28, legend: 6 };
+
+function rollCard(exclude, boost = false) {
   let roll = RNG.next() * 100, tier = 'common';
   for (const [k, r] of Object.entries(RARITY)) {
-    if (roll < r.weight) { tier = k; break; }
-    roll -= r.weight;
+    const weight = boost ? COMEBACK_WEIGHTS[k] : r.weight;
+    if (roll < weight) { tier = k; break; }
+    roll -= weight;
   }
-  const list = RARITY_LIST[tier].filter(id => !exclude.includes(id));
+  let list = RARITY_LIST[tier].filter(id => !exclude.includes(id));
+  if (!list.length) list = CARD_POOL.filter(id => !exclude.includes(id));
   return list[(RNG.next() * list.length) | 0];
 }
 
-function drawChoices() {
-  const choices = [];
-  while (choices.length < 3) choices.push(rollCard(choices));
+function drawChoices(p, boost = false) {
+  const choices = [], maxed = maxedCards(p);
+  const count = boost ? 4 : 3;
+  while (choices.length < count) choices.push(rollCard([...choices, ...maxed], boost));
   let deal = null;
   if (G.round >= 2 && RNG.next() < DEAL_CHANCE) {
-    const index = (RNG.next() * 3) | 0;
-    const legends = RARITY_LIST.legend.filter(id => !choices.includes(id));
-    choices[index] = legends[(RNG.next() * legends.length) | 0];
-    const costs = Object.keys(DEAL_COSTS);
-    deal = { index, cost: costs[(RNG.next() * costs.length) | 0] };
+    const index = (RNG.next() * count) | 0;
+    const legends = RARITY_LIST.legend.filter(id => !choices.includes(id) && !maxed.includes(id));
+    if (legends.length) {
+      choices[index] = legends[(RNG.next() * legends.length) | 0];
+      const costs = Object.keys(DEAL_COSTS);
+      deal = { index, cost: costs[(RNG.next() * costs.length) | 0] };
+    }
   }
   return { choices, deal };
 }
 
 function buildStats(p) {
   const s = computeStats(p.cards);
+  applyAwaken(s, p.cards);
   for (const d of p.deals) DEAL_COSTS[d].apply(s);
   return s;
 }
@@ -74,9 +83,15 @@ function pickRule(round) {
   return ids[(RNG.next() * ids.length) | 0];
 }
 
+// 바이옴(달)과 돌발 규칙(저중력)을 함께 반영
+function updateGravity() {
+  const biome = BIOME_DEFS[G.biome] || BIOME_DEFS.grass;
+  G.gravity = GRAVITY * Math.max(0.38, (biome.gravMult || 1) * (G.rule === 'lowgrav' ? 0.55 : 1));
+}
+
 function applyRule(rule) {
   G.rule = RULE_DEFS[rule] ? rule : null;
-  G.gravity = GRAVITY * (G.rule === 'lowgrav' ? 0.55 : 1);
+  updateGravity();
   G.windAccel = WIND_ACCEL * (G.rule === 'gale' ? 2.4 : 1);
   for (const p of players) {
     const s = buildStats(p);

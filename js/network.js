@@ -9,7 +9,7 @@ const BROKER_URLS = [
   'wss://broker.emqx.io:8084/mqtt',
   'wss://broker.hivemq.com:8884/mqtt'
 ];
-const TOPIC_PREFIX = 'tankrounds/v8/room/';
+const TOPIC_PREFIX = 'tankrounds/v9/room/';
 
 const Net = {
   active: false,
@@ -390,6 +390,7 @@ const Net = {
         G.nextFirst = msg.nextFirst;
         applyRule(msg.rule);
         if (msg.biome) setBiome(msg.biome);
+        Terrain.steel = msg.steel || [];
         Terrain.top.set(msg.terrainTop);
         Terrain.rebuild();
         if (msg.px) msg.px.forEach((x, idx) => { if (players[idx]) players[idx].x = x; });
@@ -411,6 +412,7 @@ const Net = {
           G.fields.length = 0;
         }
         if (msg.states) syncAuthoritativeState(msg.states);
+        G.barrels = (msg.barrels || []).map(b => ({ ...b }));
         G.turnCount = msg.turnCount - (players[msg.turn].alive ? 1 : 0);
         beginTurn(msg.turn, msg.wind, msg.seed);
         break;
@@ -474,6 +476,7 @@ const Net = {
             setState('aiming');
           }
           RNG.setSeed(msg.fireSeed);
+          if (typeof msg.satT === 'number') G.satT = msg.satT;
           p.x = msg.x;
           p.y = msg.y;
           p.angle = msg.angle;
@@ -485,6 +488,8 @@ const Net = {
       case 'cardChoices': {
         G.choices = msg.choices;
         G.deal = msg.deal || null;
+        G.comeback = !!msg.comeback;
+        G.rerollFx = null;
         G.cardQueue = msg.queue || [msg.loser];
         G.cardLoser = G.cardQueue[0];
         G.sel = 1;
@@ -497,6 +502,14 @@ const Net = {
           G.sel = msg.sel;
           Sfx.cardMove();
         }
+        break;
+      }
+      case 'cardReroll': {
+        rerollCard(msg.index, msg.id);
+        break;
+      }
+      case 'chat': {
+        showEmote(msg.id, msg.e);
         break;
       }
       case 'cardPick': {

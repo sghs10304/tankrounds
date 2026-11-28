@@ -18,7 +18,7 @@ function makePlayer(i) {
     angle: d.startAngle, side: d.startAngle < 90 ? 1 : -1,
     lastShotAngle: null, lastShotPower: null,
     dmgBoost: 1, radiusBoost: 1, bonusShots: 0, turnDmgTaken: 0,
-    phoenixCharges: 0, empDebuff: 0, deals: [], hpLag: 0,
+    phoenixCharges: 0, empDebuff: 0, deals: [], hpLag: 0, rerolls: 1, laser: 0, chat: null,
     power: 55, charging: false, chargeT: 0, charge: 0, fuel: 0,
     recoil: 0, hitFlash: 0, wheel: 0, tread: 0, lastX: 0
   };
@@ -34,6 +34,9 @@ const G = {
   rule: null, gravity: GRAVITY, windAccel: WIND_ACCEL,
   ghost: false, ghostX: 0, ghostKind: 'bomb', deal: null,
   slowmo: 0, focus: null, nukeFx: null, resultT: 0,
+  barrels: [], satT: 0, satDown: -1, orbital: null,
+  comeback: false, comebackIds: [], rerollFx: null,
+  menuSel: 0, menuPage: null, codexPage: 0,
   shells: [], pending: [], particles: [], rings: [], floaters: [], flashes: [], fields: [], streaks: [],
   poisons: [], crates: [], portals: [], mines: [], lightnings: [],
   events: [],
@@ -47,11 +50,30 @@ function setBiome(key) {
   G.biome = BIOME_DEFS[key] ? key : 'grass';
   Terrain.setBiome(G.biome);
   BG = makeBackground(G.biome);
+  if (G.biome === 'moon') paintMoonSky(BG.getContext('2d'));
+  updateGravity();
+}
+
+// 달 하늘: 별과 지구를 배경에 한 번만 그림
+function paintMoonSky(x) {
+  x.save();
+  x.fillStyle = '#fff';
+  for (let i = 0; i < 170; i++) {
+    x.globalAlpha = 0.25 + (i % 7) * 0.1;
+    x.fillRect((i * 317) % W, 120 + (i * 149) % 330, 1 + (i % 3 === 0 ? 1 : 0), 1 + (i % 3 === 0 ? 1 : 0));
+  }
+  x.globalAlpha = 1;
+  const g = x.createRadialGradient(1215, 235, 8, 1240, 255, 82);
+  g.addColorStop(0, '#b3e5fc'); g.addColorStop(0.55, '#1e88e5'); g.addColorStop(1, '#0d2a6b');
+  x.fillStyle = g; x.beginPath(); x.arc(1240, 255, 70, 0, TAU); x.fill();
+  x.fillStyle = 'rgba(102,187,106,0.85)';
+  for (const [dx, dy, r] of [[-22, -14, 19], [12, 8, 24], [-8, 34, 12], [34, -30, 10]]) { x.beginPath(); x.ellipse(1240 + dx, 255 + dy, r, r * 0.65, 0.5, 0, TAU); x.fill(); }
+  x.restore();
 }
 
 function packAuthoritativeState() {
   return players.map(p => ({
-    hp: p.hp, alive: p.alive, ph: p.phoenixCharges, x: p.x, emp: p.empDebuff
+    hp: p.hp, alive: p.alive, ph: p.phoenixCharges, x: p.x, emp: p.empDebuff, laser: p.laser
   }));
 }
 
@@ -64,6 +86,7 @@ function syncAuthoritativeState(states) {
     players[i].phoenixCharges = st.ph;
     players[i].x = st.x;
     players[i].empDebuff = st.emp;
+    players[i].laser = st.laser || 0;
   });
 }
 
@@ -101,7 +124,9 @@ function resetPlayersForRound() {
     p.turnDmgTaken = 0;
     p.phoenixCharges = p.stats.phoenix;
     p.empDebuff = 0;
+    p.laser = 0; p.chat = null;
   }
+  G.barrels = []; G.satDown = -1; G.satT = 0; G.orbital = null;
   G.shells.length = G.pending.length = G.particles.length = G.rings.length = G.floaters.length = G.flashes.length = G.fields.length = G.poisons.length = G.mines.length = G.lightnings.length = G.events.length = 0;
   G.screenFlash = 0; G.shake = 0;
   G.slowmo = 0; G.nukeFx = null; G.ghost = false;
@@ -132,7 +157,10 @@ function setupField() {
     }
   }
 
+  Terrain.steel = [];
   Terrain.generate(spawnXs);
+  Terrain.steel = placeSteel(spawnXs);
+  Terrain.rebuild();
   players.forEach((p, idx) => { p.x = spawnXs[idx]; });
   resetPlayersForRound();
   const gimmicks = generateSkyGimmicksData();
@@ -169,7 +197,7 @@ function startRound() {
   if (Net.active && Net.isHost) {
     Net.send({
       type: 'roundSetup', mode: G.mode, rule: G.rule, seed, biome: G.biome, round: G.round, nextFirst: G.nextFirst, turn: G.nextFirst, wind,
-      terrainTop: Array.from(Terrain.top), px: players.map(p => p.x), crates: G.crates, portals: G.portals
+      steel: Terrain.steel, terrainTop: Array.from(Terrain.top), px: players.map(p => p.x), crates: G.crates, portals: G.portals
     }, 1);
   }
   beginTurn(G.nextFirst, wind, seed);
@@ -223,6 +251,7 @@ function beginTurn(i, forcedWind = null, forcedSeed = null) {
   G.turn = i;
   const p = players[i];
   G.ghost = !p.alive;
+  G.orbital = null;
   if (!G.ghost) G.turnCount++;
   G.wind = forcedWind !== null ? forcedWind : Math.round(rand(-MAX_WIND, MAX_WIND) * 10) / 10;
   for (const pl of players) pl.turnDmgTaken = 0;
@@ -266,6 +295,7 @@ function beginTurn(i, forcedWind = null, forcedSeed = null) {
     if (G.mines[idx].life <= 0) G.mines.splice(idx, 1);
   }
 
+  dropBarrels();
   applySuddenDeath();
 
   if (G.crates.length === 0) {
@@ -458,13 +488,16 @@ function fire(p, fromRemote = false) {
         x: px,
         y: py,
         angle: pa,
-        power: pp
+        power: pp,
+        satT: G.satT
       });
     }
   }
 
   const a = aimRad(p), st = p.stats;
   const eventRoll = RNG.next();
+  // 이전에 위성을 격추했다면 이번 발사의 첫 착탄에 레이저
+  if (p.laser > 0 && eventRoll >= 0.03) { p.laser = 0; G.orbital = p; }
 
   if (eventRoll < 0.01) {
     // [특수 이벤트 1] 1% 확률: 돌발 전술 핵폭탄 (맵 초토화 + 전원 자폭 무승부)
@@ -594,6 +627,12 @@ function stepShell(s, dt) {
   for (let k = 1; k <= n; k++) {
     const px = ox + dx * k / n, py = oy + dy * k / n;
     s.x = px; s.y = py;
+    if (checkSatelliteHit(px, py, s)) { detonate(s, { type: 'air' }); return false; }
+    const barrel = barrelHit(px, py, s.r);
+    if (barrel) {
+      barrel.fuse = 0.02;
+      Sfx.hit(); detonate(s, { type: 'terrain' }); return false;
+    }
     for (const p of players) {
       if (!p.alive || (p === owner && s.age < 0.25)) continue;
       if (hitsTank(px, py, s.r, p)) {
@@ -659,7 +698,9 @@ function stepDrill(s, dt) {
       Terrain.carve(s.x, s.y, s.drillR);
       P(s.x, s.y, fxRand(-90, 90), fxRand(-120, 20), { life: 0.5, size: 3, color: getDirtColors()[(Math.random() * 4) | 0], kind: 'debris', ground: true });
     }
-    if (s.drillLeft <= 0 || s.y >= H - BEDROCK || s.x < 0 || s.x >= W) { detonate(s, { type: 'terrain' }); return false; }
+    const drum = barrelHit(s.x, s.y, s.r);
+    if (drum) drum.fuse = 0.05;
+    if (s.drillLeft <= 0 || Terrain.isSteel(s.x, s.y) || s.y >= H - BEDROCK || s.x < 0 || s.x >= W) { detonate(s, { type: 'terrain' }); return false; }
     const lx = s.x + s.dx * (s.drillR + 3), ly = s.y + s.dy * (s.drillR + 3);
     if (s.drillDug > 30 && !Terrain.solid(lx, ly)) {
       s.drilling = false; s.vx = s.dx * s.drillSpeed; s.vy = s.dy * s.drillSpeed; return true;
@@ -689,6 +730,8 @@ function detonate(s, hit) {
   }
   const c = { x: s.x, y: s.y, shell: s, radius: s.radius, damage: s.damage, raise: false, noCarve: false, raiseRadius: 0, hit };
   if (s.ghost) { explode(c, owner); return; }
+  if (G.orbital === owner) fireOrbitalLaser(s.x);
+  awakenBlast(s);
   runHooks(owner, 'onDetonate', c, owner);
   explode(c, owner);
   runHooks(owner, 'onExplode', c);
@@ -707,6 +750,7 @@ function explode(c, attacker) {
       damageTank(p, damage * falloff, '#ff5252', attacker);
     }
   }
+  igniteBarrels(x, y, radius);
   if (c.raise) Terrain.raise(x, y, c.raiseRadius);
   else if (!c.noCarve) Terrain.carve(x, y, radius);
   blastFX(x, y, radius, c.raise);
@@ -800,13 +844,15 @@ function updateFields(dt) {
       if (!f.fired && f.t >= 0.85) {
         f.fired = true;
         for (const p of players) {
-          if (!p.alive || Math.abs(p.x - f.x) > 40 + 18 * p.stats.tankScale) continue;
+          if (!p.alive || Math.abs(p.x - f.x) > (f.big ? 70 : 40) + 18 * p.stats.tankScale) continue;
           if (G.mode === '2v2' && p !== f.owner && p.team === f.owner.team) continue;
           damageTank(p, f.damage, '#ff5252', f.owner);
         }
         const gy = Terrain.h(f.x);
-        Terrain.carve(f.x, gy + 8, 30);
-        blastFX(f.x, gy, 55, false);
+        igniteBarrels(f.x, gy - 14, f.big ? 90 : 45);
+        Terrain.carve(f.x, gy + 8, f.big ? 62 : 30);
+        blastFX(f.x, gy, f.big ? 110 : 55, false);
+        if (f.big) { G.screenFlash = Math.max(G.screenFlash, 0.65); G.shake = Math.max(G.shake, 26); }
         Sfx.lightning();
         G.shake = Math.max(G.shake, 14);
       }
@@ -919,12 +965,6 @@ const keys = {};
 const BLOCK_KEYS = new Set(['Space', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Numpad0', 'Numpad4', 'Numpad5', 'Numpad6', 'Numpad8']);
 let hoverTitleBtn = -1;
 
-const TITLE_BTNS = [
-  { mode: '1v1', x: 220, y: 310, w: 360, h: 270, title: '⚔️ 로컬 1 : 1', color: '#4fc3f7', lines: ['1:1 클래식 듀얼', 'P1: WASD + Space', 'P2: 방향키 + Enter', '👉 클릭하여 시작'] },
-  { mode: '2v2', x: 620, y: 310, w: 360, h: 270, title: '🛡️ 로컬 2 : 2 팀전', color: '#ff8a65', lines: ['블루(P1·P3) vs 레드(P2·P4)', '팀원 간 아군 오사 면역', '패배 팀 전원 카드 선택!', '👉 클릭하여 시작'] },
-  { mode: 'online', x: 1020, y: 310, w: 360, h: 270, title: '🌐 온라인 멀티', color: '#69f0ae', lines: ['1:1 · 2:2 · 4인 난투', '4자리 방 코드 원격 대전', '실시간 궤적·카드 동기화', '👉 클릭하여 방 열기'] }
-];
-
 function getCanvasCoords(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
   return {
@@ -936,7 +976,8 @@ function getCanvasCoords(clientX, clientY) {
 function cardAt(e) {
   if (G.state !== 'cards' || G.stateT < 0.5 || (Net.active && G.cardLoser !== Net.myId)) return -1;
   const { x, y } = getCanvasCoords(e.clientX, e.clientY);
-  for (let i = 0; i < 3; i++) if (x >= cardX(i) && x <= cardX(i) + CARD_W && y >= CARD_Y && y <= CARD_Y + CARD_H) return i;
+  const hw = CARD_W * cardScale() / 2;
+  for (let i = 0; i < G.choices.length; i++) if (Math.abs(x - cardCenterX(i)) <= hw && y >= CARD_Y && y <= CARD_Y + CARD_H) return i;
   return -1;
 }
 canvas.addEventListener('mousemove', e => {
@@ -954,35 +995,25 @@ canvas.addEventListener('mousemove', e => {
     return;
   }
   const { x, y } = getCanvasCoords(e.clientX, e.clientY);
-  let hov = -1;
-  TITLE_BTNS.forEach((b, idx) => {
-    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) hov = idx;
-  });
+  const hov = G.menuPage ? -1 : menuButtonAt(x, y);
+  if (hov !== -1 && hov !== G.menuSel) { G.menuSel = hov; Sfx.cardMove(); }
   hoverTitleBtn = hov;
-  canvas.style.cursor = hov !== -1 ? 'pointer' : 'default';
+  canvas.style.cursor = hov !== -1 || (G.menuPage && y > 770) ? 'pointer' : 'default';
 });
 
 canvas.addEventListener('click', e => {
   Sfx.init();
+  const { x, y } = getCanvasCoords(e.clientX, e.clientY);
   if (G.state === 'cards') {
+    const r = rerollButtonAt(x, y);
+    if (r !== -1) { rerollCard(r); return; }
     const i = cardAt(e);
     if (i !== -1) { canvas.style.cursor = 'default'; pickCard(i); }
     return;
   }
-  if (G.state !== 'title') return;
-  const { x, y } = getCanvasCoords(e.clientX, e.clientY);
-  for (const b of TITLE_BTNS) {
-    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
-      canvas.style.cursor = 'default';
-      if (b.mode === 'online') {
-        Net.openModal();
-      } else {
-        Net.active = false;
-        startMatch(b.mode);
-      }
-      break;
-    }
-  }
+  if (G.state === 'title') { menuClick(x, y); return; }
+  const emote = emoteButtonAt(x, y);
+  if (emote !== -1) sendEmote(emote);
 });
 
 window.addEventListener('keydown', e => {
@@ -1029,13 +1060,12 @@ function getActiveControls(p) {
 }
 
 function onKeyDown(code) {
+  const emoteKey = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3 }[code];
+  if (emoteKey !== undefined && emoteReady()) { sendEmote(emoteKey); return; }
   switch (G.state) {
-    case 'title': {
-      if (code === 'Digit1' || code === 'Numpad1') { Net.active = false; startMatch('1v1'); }
-      else if (code === 'Digit2' || code === 'Numpad2') { Net.active = false; startMatch('2v2'); }
-      else if (code === 'Digit3' || code === 'Numpad3') { Net.openModal(); }
+    case 'title':
+      menuKey(code);
       break;
-    }
     case 'aiming': {
       const p = players[G.turn];
       if (!p || !isMyTurnControl(p)) break;
@@ -1052,13 +1082,14 @@ function onKeyDown(code) {
     case 'cards': {
       if (G.stateT < 0.5) break;
       if (Net.active && G.cardLoser !== Net.myId) break;
-      const num = { Digit1: 0, Digit2: 1, Digit3: 2, Numpad1: 0, Numpad2: 1, Numpad3: 2 }[code];
-      if (num !== undefined) { pickCard(num); break; }
+      const num = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Numpad1: 0, Numpad2: 1, Numpad3: 2 }[code];
+      if (num !== undefined) { if (num < G.choices.length) pickCard(num); break; }
+      if (code === 'KeyR') { rerollCard(G.sel); break; }
       if (code === 'ArrowLeft' || code === 'KeyA' || code === 'KeyJ') {
-        G.sel = (G.sel + 2) % 3; Sfx.cardMove();
+        G.sel = (G.sel + G.choices.length - 1) % G.choices.length; Sfx.cardMove();
         if (Net.active) Net.send({ type: 'cardSelect', sel: G.sel });
       } else if (code === 'ArrowRight' || code === 'KeyD' || code === 'KeyL') {
-        G.sel = (G.sel + 1) % 3; Sfx.cardMove();
+        G.sel = (G.sel + 1) % G.choices.length; Sfx.cardMove();
         if (Net.active) Net.send({ type: 'cardSelect', sel: G.sel });
       } else if (code === 'Space' || code === 'Enter' || code === 'KeyU' || code === 'Numpad0') {
         pickCard(G.sel);
@@ -1152,6 +1183,8 @@ function checkRoundOver() {
 
 function finishResolve() {
   if (Net.active && !Net.isHost) return;
+  // 착탄 없이 빗나간 궤도 레이저는 돌려줌
+  if (G.orbital) { G.orbital.laser = 1; G.orbital = null; }
 
   if (checkRoundOver()) {
     if (Net.active && Net.isHost) {
@@ -1170,6 +1203,7 @@ function finishResolve() {
         turnCount: G.turnCount + (players[nextTurn].alive ? 1 : 0),
         wind,
         seed,
+        barrels: G.barrels,
         states: packAuthoritativeState()
       }, 1);
     }
@@ -1185,6 +1219,7 @@ function endRound() {
   if (alivePlayers.length === 0) {
     G.winner = -1;
     G.cardQueue = players.map(p => p.id);
+    G.comebackIds = [];
     G.cardLoser = G.cardQueue[0];
     setState('roundEnd');
     return;
@@ -1198,7 +1233,8 @@ function endRound() {
     G.winner = winTeam;
     const losers = players.filter(p => p.team === loseTeam);
     G.nextFirst = losers[0].id;
-    G.cardQueue = losers.map(p => p.id);
+    G.comebackIds = losers.map(p => p.id);
+    G.cardQueue = G.comebackIds.concat(players.filter(p => p.team === winTeam).map(p => p.id));
     G.cardLoser = G.cardQueue[0];
     setState('roundEnd');
     return;
@@ -1210,7 +1246,8 @@ function endRound() {
   G.winner = winner;
   const losers = players.filter(p => p.id !== winner);
   G.nextFirst = losers[0].id;
-  G.cardQueue = losers.map(p => p.id);
+  G.comebackIds = losers.map(p => p.id);
+  G.cardQueue = G.comebackIds.concat(winner);
   G.cardLoser = G.cardQueue[0];
   setState('roundEnd');
 }
@@ -1218,11 +1255,12 @@ function endRound() {
 function openCards() {
   if (Net.active && !Net.isHost) return;
   G.cardLoser = G.cardQueue[0];
-  const offer = drawChoices();
-  G.choices = offer.choices; G.deal = offer.deal;
+  G.comeback = G.comebackIds.includes(G.cardLoser);
+  const offer = drawChoices(players[G.cardLoser], G.comeback);
+  G.choices = offer.choices; G.deal = offer.deal; G.rerollFx = null;
   G.sel = 1; G.picked = -1; G.cardAdvanced = false;
   if (Net.active && Net.isHost) {
-    Net.send({ type: 'cardChoices', choices: G.choices, deal: G.deal, loser: G.cardLoser, queue: G.cardQueue }, 1);
+    Net.send({ type: 'cardChoices', choices: G.choices, deal: G.deal, comeback: G.comeback, loser: G.cardLoser, queue: G.cardQueue }, 1);
   }
   setState('cards');
 }
@@ -1238,7 +1276,11 @@ function pickCard(i, fromRemote = false) {
   if (G.deal && G.deal.index === i) p.deals.push(G.deal.cost);
   p.stats = buildStats(p);
   G.picked = i; G.sel = i;
-  if (p.stats.synergies.length > prevSynCount) {
+  const gotId = G.choices[i];
+  if (countCards(p)[gotId] === MAX_STACK) {
+    Sfx.victory();
+    showBanner(`✨ 각성! ${AWAKEN_NAMES[gotId]}`, `${p.name}: ${CARD_DEFS[gotId].name} Lv.3 MAX`, CARD_DEFS[gotId].color, 2.4);
+  } else if (p.stats.synergies.length > prevSynCount) {
     const newSyn = p.stats.synergies[p.stats.synergies.length - 1];
     Sfx.synergy();
     showBanner(`${newSyn.icon} 시너지 각성!`, `${p.name}: [${newSyn.name}] ${newSyn.desc}`, newSyn.color, 2.2);
@@ -1266,6 +1308,8 @@ function update(raw) {
   }
   if (G.state === 'aiming') updateActivePlayer(dt);
   updateWindStreaks(dt);
+  G.satT += dt;
+  updateBarrels(dt);
   updateFields(dt);
   updateParticles(dt);
   for (const ev of G.events) if (ev.update) ev.update(dt);
@@ -1294,7 +1338,7 @@ function update(raw) {
       }
       const n = Math.max(1, Math.ceil(dt / (1 / 120))), h = dt / n;
       for (let i = 0; i < n; i++) updateShells(h);
-      const busy = G.pending.length || G.shells.length || G.fields.length || !tanksSettled();
+      const busy = G.pending.length || G.shells.length || G.fields.length || G.barrels.some(b => b.fuse > 0) || !tanksSettled();
       G.settleT = busy ? 0 : G.settleT + dt;
       if (G.settleT > 0.7 || G.resolveT > 10) finishResolve();
       break;
@@ -1619,7 +1663,9 @@ function drawField(f) {
       const k = clamp(1 - (f.t - 0.85) / 0.45, 0, 1), end = Terrain.h(f.x);
       ctx.globalCompositeOperation = 'lighter';
       for (const [wid, col] of [[80, 'rgba(255,23,68,0.35)'], [44, 'rgba(255,110,110,0.6)'], [16, '#ffffff']]) {
-        ctx.fillStyle = col; ctx.fillRect(f.x - wid * k / 2, 0, wid * k, end);
+        ctx.fillStyle = f.big ? col.replace('255,23,68', '0,145,234').replace('255,110,110', '128,216,255') : col;
+        const ww = wid * k * (f.big ? 1.9 : 1);
+        ctx.fillRect(f.x - ww / 2, 0, ww, end);
       }
     }
     ctx.restore();
@@ -1724,6 +1770,8 @@ function drawWorld() {
   drawSkyGimmicks();
   ctx.drawImage(Terrain.cv, 0, 0);
   drawMinesAndPoisons();
+  drawBarrels();
+  drawSatellite();
   for (const p of players) drawTank(p);
   for (const f of G.fields) drawField(f);
   for (const ev of G.events) if (ev.draw) ev.draw(ctx);
@@ -1732,7 +1780,8 @@ function drawWorld() {
     if (G.ghost) { if (isMyTurnControl(p)) drawGhostHUD(p); }
     else if (p && p.alive) drawProtractorHUD(p);
   }
-  for (const s of G.shells) drawShell(s);
+  for (const s of G.shells) { drawAwakenAura(s); drawShell(s); }
+  drawChatBubbles();
 
   for (const l of G.lightnings) {
     ctx.save();
@@ -1849,6 +1898,7 @@ function drawHUD() {
       if (p.stats.synergies.length) statusTxt += p.stats.synergies.map(s => `${s.icon}${s.name}`).join(' ') + '  ';
       if (p.phoenixCharges > 0) statusTxt += `🔥부활×${p.phoenixCharges}  `;
       if (p.dmgBoost > 1) statusTxt += `⚡+40%  `;
+      if (p.laser > 0) statusTxt += `🛰️레이저 장전  `;
       if (statusTxt) {
         ctx.fillStyle = '#80deea'; ctx.font = `bold 12px ${FONT}`;
         ctx.fillText(statusTxt, x0 + 305, 76);
@@ -1859,7 +1909,7 @@ function drawHUD() {
       ctx.font = `13px ${FONT}`;
       for (const id of CARD_POOL) {
         if (!counts[id]) continue;
-        const d = CARD_DEFS[id], label = `${d.icon} ${d.short}${counts[id] > 1 ? ' ×' + counts[id] : ''}`;
+        const d = CARD_DEFS[id], label = counts[id] >= MAX_STACK ? `✨${d.icon} ${AWAKEN_NAMES[id]}` : `${d.icon} ${d.short}${counts[id] > 1 ? ' ×' + counts[id] : ''}`;
         const w = ctx.measureText(label).width + 16;
         if (cx + w > x0 + pw) { cx = x0; cy += 24; }
         ctx.fillStyle = 'rgba(0,0,0,0.55)'; rr(cx, cy, w, 21, 10.5); ctx.fill();
@@ -1879,7 +1929,7 @@ function drawHUD() {
       ctx.textAlign = 'left'; ctx.font = `bold 16px ${FONT}`;
       const teamBadge = G.mode === '2v2' ? (p.team === 0 ? '[블루] ' : '[레드] ') : '';
       ctx.fillStyle = p.color;
-      ctx.fillText(`${teamBadge}${p.name}${Net.active && i === Net.myId ? ' (나)' : ''}${active ? ' ▶' : ''}`, x0, 24);
+      ctx.fillText(`${p.laser > 0 ? '🛰️ ' : ''}${teamBadge}${p.name}${Net.active && i === Net.myId ? ' (나)' : ''}${active ? ' ▶' : ''}`, x0, 24);
 
       if (G.mode === 'ffa4') {
         for (let k = 0; k < WINS_TO_MATCH; k++) {
@@ -1901,7 +1951,7 @@ function drawHUD() {
       for (const id of CARD_POOL) {
         if (!counts[id]) continue;
         const d = CARD_DEFS[id];
-        const label = `${d.icon}${counts[id] > 1 ? counts[id] : ''}`;
+        const label = `${counts[id] >= MAX_STACK ? '✨' : ''}${d.icon}${counts[id] > 1 ? counts[id] : ''}`;
         const w = ctx.measureText(label).width + 10;
         if (cx + w > x0 + pw) break;
         ctx.fillStyle = 'rgba(0,0,0,0.6)'; rr(cx, 54, w, 20, 8); ctx.fill();
@@ -1987,7 +2037,9 @@ function drawBanner() {
 
 /* 카드 선택창: 무거운 그라데이션·글로우는 오프스크린에 한 번만 그리고 매 프레임 복사 */
 const CARD_W = 360, CARD_H = 520, CARD_GAP = 50, CARD_PAD = 40, CARD_Y = 175;
-const cardX = i => W / 2 - (CARD_W * 3 + CARD_GAP * 2) / 2 + i * (CARD_W + CARD_GAP);
+const cardScale = () => G.choices.length > 3 ? 0.94 : 1;
+const cardStep = () => G.choices.length > 3 ? 378 : CARD_W + CARD_GAP;
+const cardCenterX = i => W / 2 + (i - (G.choices.length - 1) / 2) * cardStep();
 const faceCache = new Map(), glowCache = new Map();
 
 function roundPath(x, px, py, w, h, r) {
@@ -2064,6 +2116,17 @@ function getCardFace(id, have) {
   });
   x.font = `bold 16px ${FONT}`; x.fillStyle = have ? '#69f0ae' : '#9aa0c8';
   x.fillText(have ? `⚡ Lv.${have} → Lv.${have + 1} 진화!` : '✨ 신규 획득', mid, CARD_H - 76);
+  if (have === MAX_STACK - 1) {
+    // 각성 형태: 이름·테두리가 바뀜
+    const gold = x.createLinearGradient(0, 0, CARD_W, CARD_H);
+    ['#ffffff', '#ff4081', '#ffd740', '#18ffff', '#e040fb'].forEach((c, i) => gold.addColorStop(i / 4, c));
+    x.strokeStyle = gold; x.lineWidth = 13; roundPath(x, 4, 4, CARD_W - 8, CARD_H - 8, 22); x.stroke();
+    x.fillStyle = gold; x.fillRect(24, 241, CARD_W - 48, 50);
+    x.font = `900 29px ${FONT}`; x.lineWidth = 7; x.strokeStyle = '#14001f';
+    x.strokeText(AWAKEN_NAMES[id], mid, 277, CARD_W - 62); x.fillStyle = '#fff'; x.fillText(AWAKEN_NAMES[id], mid, 277, CARD_W - 62);
+    x.fillStyle = '#14001f'; roundPath(x, 36, CARD_H - 98, CARD_W - 72, 32, 16); x.fill();
+    x.font = `900 16px ${FONT}`; x.fillStyle = '#ffea00'; x.fillText('✨ Lv.3 MAX 각성! ✨', mid, CARD_H - 76);
+  }
   faceCache.set(key, cv);
   return cv;
 }
@@ -2098,7 +2161,7 @@ function drawCards() {
   ctx.fillText(G.deal ? '😈 악마의 거래 등장! 대가를 치르면 전설 카드를 얻습니다 (대가는 계속 유지)' : '특정 카드 2종을 조합하면 강력한 [시너지]가 각성합니다! · 중첩할수록 효과 진화', W / 2, 138);
 
   const counts = countCards(loser);
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < G.choices.length; i++) {
     const id = G.choices[i], d = CARD_DEFS[id];
     const sel = i === G.sel;
     // 등장 애니메이션: 순서대로 아래에서 올라오며 뒤집힘
@@ -2110,10 +2173,13 @@ function drawCards() {
       else { alpha = Math.max(0, 1 - G.stateT * 3); lift = G.stateT * 160; }
     }
     if (alpha <= 0) continue;
+    sc *= cardScale();
+    // 리롤한 카드는 다시 뒤집히며 등장
+    const flip = G.rerollFx && G.rerollFx.i === i ? clamp((G.time - G.rerollFx.at) / 0.35, 0.04, 1) : 1;
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.translate(cardX(i) + CARD_W / 2, CARD_Y + CARD_H / 2 + lift + (1 - ease) * 220);
-    ctx.scale(sc * Math.max(0.05, ease), sc);
+    ctx.translate(cardCenterX(i), CARD_Y + CARD_H / 2 + lift + (1 - ease) * 220);
+    ctx.scale(sc * Math.max(0.05, ease) * flip, sc);
     const L = -CARD_W / 2, T = -CARD_H / 2;
     if (sel) {
       ctx.globalAlpha = alpha * (0.65 + 0.25 * Math.sin(G.time * 5));
@@ -2155,8 +2221,15 @@ function drawCards() {
     ctx.font = `bold 20px ${FONT}`; ctx.fillStyle = sel ? '#111' : '#c8ccec'; ctx.fillText(String(i + 1), 0, -T - 27);
     ctx.restore();
   }
-  ctx.globalAlpha = 1; ctx.textAlign = 'center'; ctx.font = `17px ${FONT}`; ctx.fillStyle = '#9aa0c8';
-  if (G.state === 'cards' && isMyPick) ctx.fillText('카드 클릭  /  1 · 2 · 3 키  /  ← → (A/D, J/L) 이동 후 Space 또는 Enter', W / 2, 758);
+  ctx.globalAlpha = 1;
+  drawRerollButtons();
+  ctx.textAlign = 'center'; ctx.font = `17px ${FONT}`; ctx.fillStyle = '#9aa0c8';
+  if (G.state === 'cards' && isMyPick) ctx.fillText(`카드 클릭 / 숫자 1~${G.choices.length}  ·  ← → 이동 후 Space·Enter  ·  R: 선택한 카드 리롤`, W / 2, 790);
+  if (G.comeback) {
+    ctx.fillStyle = '#ff7043'; rr(W / 2 - 230, 8, 460, 34, 17); ctx.fill();
+    ctx.font = `900 17px ${FONT}`; ctx.fillStyle = '#fff';
+    ctx.fillText('🔥 컴백 보너스: 4장 중 선택 · 희귀 확률 UP!', W / 2, 31);
+  }
 }
 
 let logoLayer = null;
@@ -2164,46 +2237,13 @@ function getLogo() {
   if (logoLayer) return logoLayer;
   const [cv, x] = makeLayer(900, 150);
   x.textAlign = 'center'; x.lineJoin = 'round'; x.font = `italic 900 92px ${FONT}`;
-  x.lineWidth = 20; x.strokeStyle = '#0a0820'; x.strokeText('탱크 라운즈 v6', 450, 110);
-  x.fillStyle = '#b23c00'; x.fillText('탱크 라운즈 v6', 454, 117);
+  x.lineWidth = 20; x.strokeStyle = '#0a0820'; x.strokeText('탱크 라운즈 v7', 450, 110);
+  x.fillStyle = '#b23c00'; x.fillText('탱크 라운즈 v7', 454, 117);
   const g = x.createLinearGradient(0, 30, 0, 120);
   g.addColorStop(0, '#fffde7'); g.addColorStop(0.5, '#ffd54f'); g.addColorStop(1, '#ff8f00');
-  x.fillStyle = g; x.fillText('탱크 라운즈 v6', 450, 110);
+  x.fillStyle = g; x.fillText('탱크 라운즈 v7', 450, 110);
   logoLayer = cv;
   return cv;
-}
-
-function drawTitle() {
-  ctx.fillStyle = 'rgba(4,5,16,0.82)'; ctx.fillRect(0, 0, W, H);
-  drawRays(W / 2, 175, 1100, 0.3);
-  ctx.textAlign = 'center';
-  ctx.drawImage(getLogo(), W / 2 - 450, 100 + Math.sin(G.time * 1.8) * 6);
-  ctx.font = `22px ${FONT}`; ctx.fillStyle = '#c8cbe8';
-  ctx.fillText(`${CARD_POOL.length}종 카드 · 전설 등급 · 2라운드마다 돌발 규칙 · 유령의 복수 · 20턴 서든데스!`, W / 2, 255);
-
-  TITLE_BTNS.forEach((b, idx) => {
-    const isHov = hoverTitleBtn === idx;
-    ctx.save();
-    if (isHov) {
-      ctx.translate(b.x + b.w / 2, b.y + b.h / 2);
-      ctx.scale(1.03, 1.03);
-      ctx.translate(-(b.x + b.w / 2), -(b.y + b.h / 2));
-    }
-    ctx.fillStyle = isHov ? 'rgba(34,40,86,0.96)' : 'rgba(18,22,52,0.9)';
-    rr(b.x, b.y, b.w, b.h, 20); ctx.fill();
-    ctx.save(); ctx.clip();
-    ctx.fillStyle = b.color; ctx.globalAlpha = isHov ? 0.3 : 0.18; ctx.fillRect(b.x, b.y, b.w, 78);
-    ctx.restore();
-    ctx.strokeStyle = b.color; ctx.lineWidth = isHov ? 5 : 3;
-    rr(b.x, b.y, b.w, b.h, 20); ctx.stroke();
-    ctx.fillStyle = b.color; ctx.font = `900 26px ${FONT}`; ctx.fillText(b.title, b.x + b.w / 2, b.y + 52);
-    ctx.fillStyle = '#e6e8ff'; ctx.font = `17px ${FONT}`;
-    b.lines.forEach((l, i) => ctx.fillText(l, b.x + b.w / 2, b.y + 104 + i * 35));
-    ctx.restore();
-  });
-
-  ctx.font = `16px ${FONT}`; ctx.fillStyle = '#9aa0c8';
-  ctx.fillText(`원하는 모드를 마우스로 클릭하세요 (단축키 1~3) · ${WINS_TO_MATCH}승 선취 시 최종 우승`, W / 2, 645);
 }
 
 function draw() {
@@ -2217,6 +2257,7 @@ function draw() {
   drawNukeFx();
   if (G.screenFlash > 0.01) { ctx.fillStyle = `rgba(255,250,235,${G.screenFlash})`; ctx.fillRect(0, 0, W, H); }
   drawHUD();
+  if (G.state !== 'title') drawEmotes();
   drawFinisher();
   if (G.state === 'roundEnd') drawRoundResult();
   else drawBanner();
