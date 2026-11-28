@@ -463,7 +463,7 @@ function makeShell(owner, x, y, vx, vy, o = {}) {
   return Object.assign({
     x, y, vx, vy, owner, r: 4 * st.shellSize, age: 0, trailT: 0, bouncesLeft: st.bounces,
     hops: G.rule === 'bouncy' ? 1 : 0,
-    damage: st.damage * owner.dmgBoost, radius: st.blastRadius * owner.radiusBoost, child: false, apex: false, split: false, dead: false,
+    damage: st.damage * owner.dmgBoost, radius: st.blastRadius * owner.radiusBoost * mapBlast(), child: false, apex: false, split: false, dead: false,
     homeTarget: null, drilling: false, drilled: false, sawing: false, portalCd: 0, angle: 0
   }, o);
 }
@@ -667,23 +667,26 @@ function stepShell(s, dt) {
 }
 function stepSawblade(s, dt) {
   s.sawTime -= dt;
-  s.x += s.sawDir * 300 * dt;
+  s.x += s.sawDir * 470 * mapSpeed() * dt;
   s.x = clamp(s.x, 10, WW - 10);
   const ground = Terrain.h(s.x);
   s.y = ground - 6;
   if (s.sawCarveX === undefined || Math.abs(s.x - s.sawCarveX) >= 12) {
     s.sawCarveX = s.x;
-    Terrain.carve(s.x, ground - 10, 13);
+    Terrain.carve(s.x, ground - 10, 14);
   }
   P(s.x, s.y, fxRand(-90, 90), fxRand(-140, -40), { life: 0.35, size: 2.5, color: '#ffd54f', kind: 'spark' });
   for (const p of players) {
-    if (p.alive && isHostile(s.owner, p) && hitsTank(s.x, s.y, s.r + 6, p)) {
+    if (p.alive && isHostile(s.owner, p) && hitsTank(s.x, s.y, s.r + 12, p)) {
+      // 갈아버리는 추가 피해 후 띄워 올리며 폭발
+      damageTank(p, s.damage * (0.45 + 0.15 * s.owner.stats.sawblade), '#eceff1', s.owner);
+      p.air = true; p.vy = -300;
+      burst(s.x, s.y, 24, { colors: ['#ffffff', '#ffd54f', '#ff7043'], speed: 460, life: 0.5, size: 3.5, kind: 'spark' });
       detonate(s, { type: 'tank', tank: p });
       return false;
     }
   }
   if (s.sawTime <= 0 || s.x <= 12 || s.x >= WW - 12) {
-    s.radius *= 0.6;
     detonate(s, { type: 'terrain' });
     return false;
   }
@@ -775,9 +778,9 @@ function explode(c, attacker) {
   blastFX(x, y, radius, c.raise);
   Sfx.explosion(radius);
 }
-function damageTank(p, amt, col = '#ff5252', attacker = null) {
+function damageTank(p, amt, col = '#ff5252', attacker = null, uncapped = false) {
   if (!p.alive) return;
-  const cap = (G.round <= 3) ? p.roundMaxHp : Math.round(p.roundMaxHp * 0.75);
+  const cap = uncapped ? Infinity : (G.round <= 3) ? p.roundMaxHp : Math.round(p.roundMaxHp * 0.75);
   const remainCap = Math.max(0, cap - p.turnDmgTaken);
   if (attacker && p.stats.armor > 0) {
     amt *= Math.max(0.45, Math.pow(0.82, p.stats.armor) * (p.stats.synFortress ? 0.85 : 1));
@@ -862,25 +865,6 @@ function updateFields(dt) {
         if (reached && f.knock) { e.air = true; e.vy = -f.knock; e.vx += f.dir * f.knock * 0.6; }
         explode({ x: f.x, y: f.y, radius: f.radius, damage: f.damage, noCarve: f.fly }, f.owner);
       }
-      continue;
-    }
-    if (f.type === 'laser') {
-      if (!f.fired && f.t >= 0.85) {
-        f.fired = true;
-        for (const p of players) {
-          if (!p.alive || Math.abs(p.x - f.x) > (f.big ? 70 : 40) + 18 * p.stats.tankScale) continue;
-          if (G.mode === '2v2' && p !== f.owner && p.team === f.owner.team) continue;
-          damageTank(p, f.damage, '#ff5252', f.owner);
-        }
-        const gy = Terrain.h(f.x);
-        igniteBarrels(f.x, gy - 14, f.big ? 90 : 45);
-        Terrain.carve(f.x, gy + 8, f.big ? 62 : 30);
-        blastFX(f.x, gy, f.big ? 110 : 55, false);
-        if (f.big) { G.screenFlash = Math.max(G.screenFlash, 0.65); G.shake = Math.max(G.shake, 26); }
-        Sfx.lightning();
-        G.shake = Math.max(G.shake, 14);
-      }
-      if (f.t >= 1.3) G.fields.splice(i, 1);
       continue;
     }
     if (f.type === 'healbox') {
@@ -1315,7 +1299,8 @@ function pickCard(i, fromRemote = false) {
   const gotId = G.choices[i];
   if (countCards(p)[gotId] === MAX_STACK) {
     Sfx.victory();
-    showBanner(`✨ 각성! ${AWAKEN_NAMES[gotId]}`, `${p.name}: ${CARD_DEFS[gotId].name} Lv.3 MAX`, CARD_DEFS[gotId].color, 2.4);
+    const star = star3Of(gotId);
+    G.star3Fx = { id: gotId, at: G.time, who: p.name, text: star ? star.text : `${CARD_DEFS[gotId].name} Lv.3 MAX` };
   } else if (p.stats.synergies.length > prevSynCount) {
     const newSyn = p.stats.synergies[p.stats.synergies.length - 1];
     Sfx.synergy();
@@ -1406,7 +1391,7 @@ function update(raw) {
       if (aiOn() && G.cardLoser === AI_ID && G.stateT > 1.7) pickCard(botCardChoice());
       break;
     case 'cardPicked':
-      if (G.stateT > 0.95 && !G.cardAdvanced) {
+      if (G.stateT > (G.star3Fx ? STAR3_FX_TIME : 0.95) && !G.cardAdvanced) {
         G.cardAdvanced = true;
         if (Net.active && !Net.isHost) break; // 참가자는 호스트의 다음 신호를 대기
         G.cardQueue.shift();
@@ -1694,25 +1679,6 @@ function drawField(f) {
     ctx.restore();
     return;
   }
-  if (f.type === 'laser') {
-    if (f.t < 0) return;
-    ctx.save();
-    if (!f.fired) {
-      ctx.strokeStyle = '#ff1744'; ctx.lineWidth = 2; ctx.globalAlpha = 0.5 + 0.5 * Math.sin(f.t * 40);
-      ctx.beginPath(); ctx.moveTo(f.x, 0); ctx.lineTo(f.x, Terrain.h(f.x)); ctx.stroke();
-      ctx.beginPath(); ctx.arc(f.x, Terrain.h(f.x), 44 * (1.4 - f.t / 1.4), 0, TAU); ctx.stroke();
-    } else {
-      const k = clamp(1 - (f.t - 0.85) / 0.45, 0, 1), end = Terrain.h(f.x);
-      ctx.globalCompositeOperation = 'lighter';
-      for (const [wid, col] of [[80, 'rgba(255,23,68,0.35)'], [44, 'rgba(255,110,110,0.6)'], [16, '#ffffff']]) {
-        ctx.fillStyle = f.big ? col.replace('255,23,68', '0,145,234').replace('255,110,110', '128,216,255') : col;
-        const ww = wid * k * (f.big ? 1.9 : 1);
-        ctx.fillRect(f.x - ww / 2, 0, ww, end);
-      }
-    }
-    ctx.restore();
-    return;
-  }
   if (f.type === 'healbox') {
     ctx.save();
     ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
@@ -1764,10 +1730,14 @@ function drawShell(s) {
   ctx.save();
   if (s.sawing) {
     ctx.translate(s.x, s.y);
-    ctx.rotate(G.time * 25);
+    ctx.translate(0, -8);
+    ctx.rotate(G.time * 28 * s.sawDir);
     ctx.fillStyle = '#eceff1';
-    ctx.beginPath(); ctx.arc(0, 0, 11, 0, TAU); ctx.fill();
+    ctx.beginPath();
+    for (let i = 0; i < 24; i++) { const rad = i % 2 ? 14 : 21, a = i * TAU / 24; ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad); }
+    ctx.closePath(); ctx.fill();
     ctx.strokeStyle = '#ff5252'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#455a64'; ctx.beginPath(); ctx.arc(0, 0, 6, 0, TAU); ctx.fill();
     ctx.restore();
     return;
   }
@@ -1948,7 +1918,7 @@ function drawHUD() {
       if (p.stats.synergies.length) statusTxt += p.stats.synergies.map(s => `${s.icon}${s.name}`).join(' ') + '  ';
       if (p.phoenixCharges > 0) statusTxt += `🔥부활×${p.phoenixCharges}  `;
       if (p.dmgBoost > 1) statusTxt += `⚡+40%  `;
-      if (p.laser > 0) statusTxt += `🛰️레이저 장전  `;
+      if (p.laser > 0) statusTxt += `🛰️궤도 강타 장전  `;
       if (statusTxt) {
         ctx.fillStyle = '#80deea'; ctx.font = `bold 12px ${FONT}`;
         ctx.fillText(statusTxt, x0 + 305, 76);
@@ -2159,13 +2129,15 @@ function getCardFace(id, have) {
   x.font = `900 30px ${FONT}`; x.lineWidth = 6; x.strokeStyle = 'rgba(0,0,0,0.65)'; x.lineJoin = 'round';
   x.strokeText(d.name, mid, 277); x.fillStyle = '#fff'; x.fillText(d.name, mid, 277);
   // 설명 (폭이 넘치면 자동 축소)
-  d.desc.forEach((line, k) => {
+  const star = star3Of(id);
+  const lines = have === MAX_STACK - 1 && star ? [d.desc[0], `★★★ ${star.text}`] : d.desc;
+  lines.forEach((line, k) => {
     x.fillStyle = 'rgba(255,255,255,0.06)'; roundPath(x, 24, 316 + k * 48, CARD_W - 48, 40, 10); x.fill();
     x.font = `${k ? 'bold ' : ''}17px ${FONT}`; x.fillStyle = k ? '#ffd54f' : '#e3e6ff';
     x.fillText(line, mid, 342 + k * 48, CARD_W - 62);
   });
   x.font = `bold 16px ${FONT}`; x.fillStyle = have ? '#69f0ae' : '#9aa0c8';
-  x.fillText(have ? `⚡ Lv.${have} → Lv.${have + 1} 진화!` : '✨ 신규 획득', mid, CARD_H - 76);
+  x.fillText(have >= MAX_STACK ? '★★★ 3성' : have === 2 ? '★★★ 3성 완성!' : have ? '⚡ ★★ 2성! 한 장 더 모으면 3성' : star ? '✨ 신규 · 3장 모으면 3성 폭발' : '✨ 신규 획득', mid, CARD_H - 76, CARD_W - 40);
   if (have === MAX_STACK - 1) {
     // 각성 형태: 이름·테두리가 바뀜
     const gold = x.createLinearGradient(0, 0, CARD_W, CARD_H);
@@ -2175,7 +2147,7 @@ function getCardFace(id, have) {
     x.font = `900 29px ${FONT}`; x.lineWidth = 7; x.strokeStyle = '#14001f';
     x.strokeText(AWAKEN_NAMES[id], mid, 277, CARD_W - 62); x.fillStyle = '#fff'; x.fillText(AWAKEN_NAMES[id], mid, 277, CARD_W - 62);
     x.fillStyle = '#14001f'; roundPath(x, 36, CARD_H - 98, CARD_W - 72, 32, 16); x.fill();
-    x.font = `900 16px ${FONT}`; x.fillStyle = '#ffea00'; x.fillText('✨ Lv.3 MAX 각성! ✨', mid, CARD_H - 76);
+    x.font = `900 16px ${FONT}`; x.fillStyle = '#ffea00'; x.fillText(star ? '★★★ 3성 완성! ★★★' : '✨ Lv.3 MAX 각성! ✨', mid, CARD_H - 76);
   }
   faceCache.set(key, cv);
   return cv;
@@ -2301,6 +2273,7 @@ function draw() {
   if (G.state === 'cards' || G.state === 'cardPicked') drawCards();
   else if (G.state === 'title') drawTitle();
   else if (G.state === 'matchOver') drawMatchOver();
+  drawStar3Fx();
 }
 
 /* ============================ 메인 루프 ============================ */

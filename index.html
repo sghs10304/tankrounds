@@ -3,7 +3,48 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
-<title>탱크 라운즈</title>
+<title>탱크 라운즈 (Tank Rounds) - 무료 턴제 탱크 포격 웹게임</title>
+<meta name="description" content="설치 없이 바로 즐기는 무료 턴제 탱크 배틀 게임, 탱크 라운즈. 65종의 카드를 모아 탱크를 강화하고 AI 대전, 로컬·온라인 1:1, 2:2 팀전, 4인 난투로 겨뤄 보세요. PC와 모바일 브라우저 지원.">
+<meta name="keywords" content="탱크 라운즈, 탱크라운즈, Tank Rounds, 탱크 게임, 포격 게임, 턴제 게임, 웹게임, 무료 게임, 2인용 게임, 4인용 게임, 온라인 대전, 크롬북 게임">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<meta name="theme-color" content="#080a1e">
+<link rel="canonical" href="https://sghs10304.github.io/tankrounds/">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="docs/icon-180.png">
+<!-- 카카오톡·디스코드 등에 링크를 붙였을 때 보이는 미리보기 -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="탱크 라운즈">
+<meta property="og:locale" content="ko_KR">
+<meta property="og:url" content="https://sghs10304.github.io/tankrounds/">
+<meta property="og:title" content="탱크 라운즈 (Tank Rounds) - 무료 턴제 탱크 포격 웹게임">
+<meta property="og:description" content="설치 없이 바로 즐기는 무료 턴제 탱크 배틀 게임, 탱크 라운즈. 65종의 카드를 모아 탱크를 강화하고 AI 대전, 로컬·온라인 1:1, 2:2 팀전, 4인 난투로 겨뤄 보세요. PC와 모바일 브라우저 지원.">
+<meta property="og:image" content="https://sghs10304.github.io/tankrounds/docs/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="탱크 라운즈 메인 화면">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="탱크 라운즈 (Tank Rounds) - 무료 턴제 탱크 포격 웹게임">
+<meta name="twitter:description" content="설치 없이 바로 즐기는 무료 턴제 탱크 배틀 게임, 탱크 라운즈. 65종의 카드를 모아 탱크를 강화하고 AI 대전, 로컬·온라인 1:1, 2:2 팀전, 4인 난투로 겨뤄 보세요. PC와 모바일 브라우저 지원.">
+<meta name="twitter:image" content="https://sghs10304.github.io/tankrounds/docs/og-image.jpg">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "VideoGame",
+  "name": "탱크 라운즈",
+  "alternateName": ["Tank Rounds", "탱크라운즈"],
+  "url": "https://sghs10304.github.io/tankrounds/",
+  "image": "https://sghs10304.github.io/tankrounds/docs/og-image.jpg",
+  "description": "설치 없이 바로 즐기는 무료 턴제 탱크 배틀 게임, 탱크 라운즈. 65종의 카드를 모아 탱크를 강화하고 AI 대전, 로컬·온라인 1:1, 2:2 팀전, 4인 난투로 겨뤄 보세요. PC와 모바일 브라우저 지원.",
+  "inLanguage": "ko",
+  "genre": ["턴제 전략", "포격", "카드 드래프트"],
+  "gamePlatform": ["Web browser"],
+  "applicationCategory": "Game",
+  "operatingSystem": "Any",
+  "playMode": ["SinglePlayer", "MultiPlayer"],
+  "numberOfPlayers": { "@type": "QuantitativeValue", "minValue": 1, "maxValue": 4 },
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "KRW" }
+}
+</script>
 <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#05060d;overflow:hidden;font-family:'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif}
@@ -67,7 +108,14 @@
 </style>
 </head>
 <body>
-<canvas id="game" width="1600" height="900" tabindex="0"></canvas>
+<canvas id="game" width="1600" height="900" tabindex="0" aria-label="탱크 라운즈 게임 화면"></canvas>
+<noscript>
+  <div style="position:fixed;inset:0;overflow:auto;padding:24px;color:#fff;background:#080a1e">
+    <h1>탱크 라운즈 (Tank Rounds)</h1>
+    <p>설치 없이 바로 즐기는 무료 턴제 탱크 배틀 게임, 탱크 라운즈. 65종의 카드를 모아 탱크를 강화하고 AI 대전, 로컬·온라인 1:1, 2:2 팀전, 4인 난투로 겨뤄 보세요. PC와 모바일 브라우저 지원.</p>
+    <p>이 게임을 플레이하려면 브라우저에서 자바스크립트를 켜 주세요.</p>
+  </div>
+</noscript>
 
 <!-- 모바일 터치 조작 -->
 <div id="touch-ui">
@@ -109,15 +157,15 @@
 </div>
 
 <!-- 기능별 모듈 스크립트 (순서 유지) -->
-<script src="js/core.js?v=10"></script>
-<script src="js/cards.js?v=10"></script>
-<script src="js/extras.js?v=10"></script>
-<script src="js/mobile.js?v=10"></script>
-<script src="js/ai.js?v=10"></script>
-<script src="js/features.js?v=10"></script>
-<script src="js/camera.js?v=10"></script>
-<script src="js/legends.js?v=10"></script>
-<script src="js/network.js?v=10"></script>
-<script src="js/game.js?v=10"></script>
+<script src="js/core.js?v=11"></script>
+<script src="js/cards.js?v=11"></script>
+<script src="js/extras.js?v=11"></script>
+<script src="js/mobile.js?v=11"></script>
+<script src="js/ai.js?v=11"></script>
+<script src="js/features.js?v=11"></script>
+<script src="js/camera.js?v=11"></script>
+<script src="js/legends.js?v=11"></script>
+<script src="js/network.js?v=11"></script>
+<script src="js/game.js?v=11"></script>
 </body>
 </html>

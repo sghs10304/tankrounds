@@ -2,19 +2,23 @@
 
 /* ============================ 맵 크기 & 카메라 ============================ */
 // W/H 는 화면 크기, WW 는 라운드마다 바뀌는 맵(월드) 폭
+// 라운드가 올라갈 때마다 계속 넓어짐 (1:1 최대 4800, 2:2·4인전 최대 5600)
+const MAP_GROWTH = [0, 250, 500, 1000, 1600, 2200];
 function worldWidthFor(mode, round) {
-  const grow = round <= 3 ? 0 : round === 4 ? 500 : round === 5 ? 900 : 1300;
-  return (mode === '1v1' ? 1600 : 2400) + grow; // 1:1 최대 2900, 4인전 최대 3700
+  const grow = round <= 6 ? MAP_GROWTH[Math.max(1, round) - 1] : 2200 + (round - 6) * 400;
+  return (mode === '1v1' ? 1600 : 2400) + Math.min(3200, grow);
 }
 const mapScale = () => WW / W;
 // 맵이 넓어진 만큼 포탄 속도를 올려서 사거리를 맞춤 (사거리는 속도²에 비례)
 const mapSpeed = () => Math.sqrt(mapScale());
 // 하늘에서 떨어지는 공격은 넓은 맵에서 화면 위쪽부터 나오도록 더 높이서 시작
+// 맵이 넓어지면 폭발 범위도 조금 커져서 맞히는 맛이 유지됨
+const mapBlast = () => 1 + 0.16 * (mapScale() - 1);
 const skyDrop = y => y < 0 ? y - (WW - W) * 0.4 : y;
 
 function sdStart() {
   const many = players.length > 2;
-  const extra = clamp(G.round - 3, 0, 5);
+  const extra = clamp(G.round - 3, 0, 7);
   return SUDDEN_DEATH_TURN + (many ? 8 : 0) + extra * (many ? 6 : 4);
 }
 

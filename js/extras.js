@@ -31,7 +31,10 @@ const LEGEND_PITY = 8; // 전설이 없는 선택창이 이만큼 이어지면 �
 // 패배자 컴백 보너스 확률 (합계 100)
 const COMEBACK_WEIGHTS = { common: 25, rare: 44, epic: 29, legend: 2 };
 
-function rollCard(exclude, boost = false, allowLegend = false) {
+// 이미 가진 카드는 같은 등급 안에서 더 잘 나옴 (3성 노리기)
+const OWNED_WEIGHT = { common: 4, rare: 3.2, epic: 1.8, legend: 1 };
+
+function rollCard(exclude, boost = false, allowLegend = false, owned = {}) {
   const entries = Object.keys(RARITY)
     .filter(k => k !== 'legend' || allowLegend)
     .map(k => [k, boost ? COMEBACK_WEIGHTS[k] : RARITY[k].weight]);
@@ -42,7 +45,13 @@ function rollCard(exclude, boost = false, allowLegend = false) {
   }
   let list = RARITY_LIST[tier].filter(id => !exclude.includes(id));
   if (!list.length) list = CARD_POOL.filter(id => !exclude.includes(id) && rarityOf(id) !== 'legend');
-  return list[(RNG.next() * list.length) | 0];
+  const weights = list.map(id => owned[id] ? OWNED_WEIGHT[rarityOf(id)] : 1);
+  let pick = RNG.next() * weights.reduce((sum, w) => sum + w, 0);
+  for (let i = 0; i < list.length; i++) {
+    pick -= weights[i];
+    if (pick < 0) return list[i];
+  }
+  return list[list.length - 1];
 }
 
 function drawChoices(p, boost = false) {
@@ -51,7 +60,7 @@ function drawChoices(p, boost = false) {
   // 직전 선택창들에 전설이 나왔으면 잠시 쉼, 선택창 하나에는 최대 1장
   const open = G.legendCool <= 0;
   const hasLegend = () => choices.some(id => rarityOf(id) === 'legend');
-  while (choices.length < count) choices.push(rollCard([...choices, ...maxed], boost, open && !hasLegend()));
+  while (choices.length < count) choices.push(rollCard([...choices, ...maxed], boost, open && !hasLegend(), countCards(p)));
   const legends = () => RARITY_LIST.legend.filter(id => !choices.includes(id) && !maxed.includes(id));
   let deal = null;
   if (open && !hasLegend() && G.round >= 2 && RNG.next() < DEAL_CHANCE && legends().length) {

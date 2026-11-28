@@ -25,16 +25,90 @@ const AWAKEN_NAMES = {
 // 3중첩에서 능력을 한 번 더 적용하면 지나치게 강해지는 카드는 공격력 보너스만 받음
 const NO_EXTRA_APPLY = ['homing', 'glass', 'buckshot', 'burst', 'nuke', 'giant', 'angel'];
 
+// 일반·희귀 카드 3성: 전설 부럽지 않은 보상
+// again: 카드 효과를 추가로 적용하는 횟수 (3장 + again = 실제 성능 레벨)
+const STAR3 = {
+  // 일반
+  bouncer: { text: '총 10번 튕기며 튕길수록 강해짐', again: 2 },
+  sniper: { text: '피해 ×1.8 · 가이드선 2.5배', again: 0, bonus(s) { s.damage *= 1.8; s.guideTime *= 2.5; } },
+  terraform: { text: '산맥 소환 · 피해 ×1.7', again: 1, bonus(s) { s.damage *= 1.7; } },
+  giant: { text: '체력 ×1.8 · 폭발 범위 ×1.35', again: 0, bonus(s) { s.maxHp *= 1.8; s.blastRadius *= 1.35; } },
+  engine: { text: '무한급 연료 · 피해 ×1.5', again: 2, bonus(s) { s.damage *= 1.5; } },
+  heavy: { text: '피해 약 3배의 초대형 철갑탄', again: 1, bonus(s) { s.blastRadius *= 1.2; } },
+  burger: { text: '회복량 29% + 모든 피해 25% 흡혈', again: 2, bonus(s) { s.leech += 0.25; } },
+  octopus: { text: '초대형 먹물 · 피해 ×1.45', again: 2, bonus(s) { s.damage *= 1.45; } },
+  bee: { text: '꿀벌 8마리 대군 · 독침 강화', again: 2 },
+  firework: { text: '폭죽 14발 대폭죽쇼', again: 2 },
+  banana: { text: '바나나 7개 연쇄 폭발', again: 2 },
+  frost: { text: '빙결 피해 37 · 피해 ×1.35', again: 2, bonus(s) { s.damage *= 1.35; } },
+  mole: { text: '초대형 함정 · 피해 ×1.4', again: 2, bonus(s) { s.damage *= 1.4; } },
+  bowling: { text: '볼링공 3개 트리플 스트라이크', again: 2 },
+  chicken: { text: '폭탄 달걀 8개 융단폭격', again: 2 },
+  cactus: { text: '가시 15발 전방위 난사', again: 2 },
+  // 희귀
+  armor: { text: '철옹성: 체력 ×1.35 추가', again: 1, bonus(s) { s.maxHp *= 1.35; } },
+  sawblade: { text: '전장을 가로지르는 지옥 톱날 · 피해 ×1.3', again: 2, bonus(s) { s.damage *= 1.3; } }
+};
+const RARE_STAR3 = { text: '카드 효과 한 단계 추가 · 피해 ×1.35 · 체력 ×1.15', again: 1, bonus(s) { s.damage *= 1.2; s.maxHp *= 1.1; } };
+function star3Of(id) {
+  if (STAR3[id]) return STAR3[id];
+  return rarityOf(id) === 'rare' ? RARE_STAR3 : null;
+}
+
 function applyAwaken(s, cards) {
   const counts = {};
   for (const id of cards) counts[id] = (counts[id] || 0) + 1;
   s.awakened = Object.keys(counts).filter(id => counts[id] >= MAX_STACK);
   for (const id of s.awakened) {
-    if (!NO_EXTRA_APPLY.includes(id)) CARD_DEFS[id].apply(s);
-    s.damage *= 1.12;
+    const star = star3Of(id);
+    if (!star) {
+      if (!NO_EXTRA_APPLY.includes(id)) CARD_DEFS[id].apply(s);
+      s.damage *= 1.12;
+      continue;
+    }
+    for (let i = 0; i < star.again; i++) CARD_DEFS[id].apply(s);
+    const common = rarityOf(id) === 'common';
+    s.damage *= common ? 1.3 : 1.12;
+    s.maxHp *= common ? 1.2 : 1.05;
+    if (star.bonus) star.bonus(s);
   }
   s.awakenColor = s.awakened.length ? CARD_DEFS[s.awakened[s.awakened.length - 1]].color : null;
   s.maxHp = Math.round(s.maxHp);
+}
+
+const STAR3_FX_TIME = 2.2;
+function drawStar3Fx() {
+  const fx = G.star3Fx;
+  if (!fx) return;
+  const t = G.time - fx.at;
+  if (t > STAR3_FX_TIME || t < 0 || G.state === 'title') { G.star3Fx = null; return; }
+  const d = CARD_DEFS[fx.id], a = Math.min(1, t / 0.15, (STAR3_FX_TIME - t) / 0.3), cy = H / 2 - 40;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.fillStyle = 'rgba(6,4,22,0.84)'; ctx.fillRect(0, 0, W, H);
+  ctx.translate(W / 2, cy);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter'; ctx.rotate(t * 0.5); ctx.fillStyle = 'rgba(255,196,0,0.14)';
+  for (let i = 0; i < 16; i++) { ctx.rotate(TAU / 16); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(900, -70); ctx.lineTo(900, 70); ctx.closePath(); ctx.fill(); }
+  ctx.restore();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const pop = 1 + Math.max(0, 0.45 - t) * 2;
+  ctx.font = `${Math.round(150 * pop)}px ${FONT}`; ctx.fillStyle = '#fff'; ctx.fillText(d.icon, 0, -20);
+  // 별 3개가 차례로 쾅쾅쾅
+  for (let i = 0; i < 3; i++) {
+    const st = t - 0.25 - i * 0.2;
+    if (st < 0) continue;
+    const k = 1 + Math.max(0, 0.18 - st) * 9;
+    ctx.font = `900 ${Math.round((i === 1 ? 104 : 82) * k)}px ${FONT}`;
+    ctx.lineWidth = 8; ctx.strokeStyle = '#5d3200'; ctx.fillStyle = '#ffd600';
+    const sx = (i - 1) * 120, sy = i === 1 ? -175 : -145;
+    ctx.strokeText('★', sx, sy); ctx.fillText('★', sx, sy);
+  }
+  ctx.font = `900 62px ${FONT}`; ctx.lineWidth = 10; ctx.strokeStyle = '#14001f';
+  ctx.strokeText(AWAKEN_NAMES[fx.id], 0, 140); ctx.fillStyle = '#fff59d'; ctx.fillText(AWAKEN_NAMES[fx.id], 0, 140);
+  ctx.font = `900 30px ${FONT}`; ctx.fillStyle = '#fff'; ctx.fillText(`${fx.who} · 3성 달성!`, 0, 205);
+  ctx.font = `bold 26px ${FONT}`; ctx.fillStyle = d.color; ctx.fillText(fx.text, 0, 250);
+  ctx.restore();
 }
 
 function drawAwakenAura(s) {
@@ -86,7 +160,7 @@ function rerollCard(i, remote = null) {
   if (id === null) {
     if (!canReroll() || G.stateT < 0.5) return;
     RNG.setSeed((Date.now() ^ ((Math.random() * 0xFFFFFFFF) >>> 0)) >>> 0);
-    id = rollCard([...G.choices, ...maxedCards(p)], G.comeback);
+    id = rollCard([...G.choices, ...maxedCards(p)], G.comeback, false, countCards(p));
     if (Net.active) Net.send({ type: 'cardReroll', index: i, id }, 1);
   }
   p.rerolls--;
@@ -248,7 +322,7 @@ function drawBarrels() {
 }
 
 /* ---------------------------- 5. 정찰 위성 & 궤도 레이저 ---------------------------- */
-const SAT_RADIUS = 15;
+const SAT_RADIUS = 11;
 const satWindow = () => Math.floor((G.turnCount + 1) / 6); // 5~6턴, 11~12턴, 17~18턴 ...
 
 function satelliteActive() {
@@ -256,33 +330,31 @@ function satelliteActive() {
   return G.turnCount >= 5 && (m === 5 || m === 0) && G.satDown !== satWindow();
 }
 
-// 빠른 왕복 + 속도 변화 + 위아래 흔들림 (격추 난이도 상)
+// 빠른 왕복 + 갑작스러운 급정지·역주행 + 불규칙한 상하 회피 (격추 난이도 최상)
 function satellitePos(t = G.satT) {
   const span = WW - 160;
-  const run = t * 540 * mapSpeed() + Math.sin(t * 2.7) * 120;
+  const run = t * 660 * mapSpeed() + Math.sin(t * 4.3) * 185 + Math.sin(t * 1.7) * 90;
   const m = ((run % (span * 2)) + span * 2) % (span * 2);
-  return { x: 80 + (m < span ? m : span * 2 - m), y: 222 + Math.sin(t * 3.3) * 44 + Math.sin(t * 7.1) * 12 };
+  return { x: 80 + (m < span ? m : span * 2 - m), y: 226 + Math.sin(t * 3.9) * 58 + Math.sin(t * 8.3) * 20 };
 }
 
 function checkSatelliteHit(px, py, shell) {
   if (shell.ghost || !satelliteActive()) return false;
   const p = satellitePos();
-  if (Math.hypot(px - p.x, py - p.y) > SAT_RADIUS + shell.r) return false;
+  if (Math.hypot(px - p.x, py - p.y) > SAT_RADIUS + Math.min(shell.r, 5)) return false;
   G.satDown = satWindow();
   const owner = shell.owner;
   owner.laser = 1;
   burst(p.x, p.y, 40, { colors: ['#fff', '#80d8ff', '#ffd54f'], speed: 430, life: 1.1, size: 4, grav: 0.8, kind: 'spark' });
   G.flashes.push({ x: p.x, y: p.y, r: 90, t: 0, life: 0.35 });
   Sfx.explosion(60); Sfx.synergy();
-  showBanner('🛰️ 위성 격추!', `${owner.name}: 다음 발사에 궤도 레이저 장전`, '#80d8ff', 2.2);
+  showBanner('🛰️ 위성 격추!', `${owner.name}: 다음 발사 착탄 지점에 [궤도 강타]`, '#ffab40', 2.4);
   return true;
 }
 
 function fireOrbitalLaser(x) {
-  G.fields.push({ type: 'laser', x: clamp(x, 20, WW - 20), owner: G.orbital, t: 0.1, damage: 45, fired: false, big: true });
-  G.floaters.push({ x, y: 190, text: '🛰️ 궤도 레이저 발사!', color: '#80d8ff', t: 0, life: 1.6 });
+  spawnOrbitalStrike(clamp(x, 20, WW - 20), G.orbital);
   G.orbital = null;
-  Sfx.siren();
 }
 
 function drawSatellite() {
@@ -301,7 +373,7 @@ function drawSatellite() {
   ctx.fillStyle = Math.sin(G.time * 12) > 0 ? '#ff1744' : '#5d1020';
   ctx.beginPath(); ctx.arc(0, 0, 4.5, 0, TAU); ctx.fill();
   ctx.font = `bold 12px ${FONT}`; ctx.textAlign = 'center'; ctx.fillStyle = '#b3e5fc';
-  ctx.fillText('정찰 위성 · 격추하면 레이저!', 0, -20);
+  ctx.fillText('정찰 위성 · 격추하면 궤도 강타!', 0, -20);
   ctx.restore();
 }
 
@@ -385,11 +457,11 @@ const HELP_LINES = [
   `🏆 ${WINS_TO_MATCH}승을 먼저 하면 최종 우승 · 라운드가 끝나면 모두 카드 선택`,
   '🔥 직전 라운드 패배자는 카드 4장 중 선택 + 희귀 확률 상승 (승자는 3장)',
   '🔄 매치당 한 번, 원하는 카드 1장만 교체 (버튼 클릭 또는 R 키)',
-  '✨ 같은 카드를 3번 모으면 각성 · 3번이 최대',
+  '✨ 같은 카드 3장 = 3성(최대) · 일반·희귀는 보너스가 특히 커요',
   '😈 가끔 등장하는 악마의 거래: 대가를 치르고 전설 카드 획득',
-  '🗺️ 4라운드부터 맵과 체력이 커짐 · V 키(또는 🔍)로 확대/전체 보기',
+  '🗺️ 라운드마다 맵이 넓어지고 체력 증가 · V 키(또는 🔍)로 확대',
   '🛢️ 1턴부터 8턴마다 화약 드럼통 투하 · 서로 연쇄 폭발',
-  '🛰️ 5~6, 11~12, 17~18턴의 정찰 위성을 격추하면 궤도 레이저 획득',
+  '🛰️ 5~6, 11~12, 17~18턴의 정찰 위성을 격추하면 궤도 강타 획득',
   '⬛ 강철 지반은 어떤 폭발에도 부서지지 않음',
   '🎲 2라운드마다 돌발 규칙 · 👻 4인전에서 쓰러지면 유령의 복수',
   `☠️ ${SUDDEN_DEATH_TURN}턴 후 서든데스(후반·4인전은 더 늦게)   💬 숫자 1~4 로 이모지`

@@ -9,7 +9,7 @@ const BROKER_URLS = [
   'wss://broker.emqx.io:8084/mqtt',
   'wss://broker.hivemq.com:8884/mqtt'
 ];
-const TOPIC_PREFIX = 'tankrounds/v10/room/';
+const TOPIC_PREFIX = 'tankrounds/v11/room/';
 
 const Net = {
   active: false,

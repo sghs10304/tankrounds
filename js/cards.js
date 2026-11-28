@@ -409,9 +409,12 @@ function hookSawblade(s, hit, owner) {
   const lv = owner.stats.sawblade;
   s.sawing = true;
   s.sawed = true;
-  s.sawDir = s.vx >= 0 ? 1 : -1;
-  s.sawTime = 0.85 + lv * 0.45;
-  s.damage = Math.max(16, s.damage * (0.65 + lv * 0.15));
+  // 가장 가까운 적 쪽으로 방향을 잡고 질주
+  const e = enemyTank(owner, s.x, s.y);
+  s.sawDir = e ? (e.x >= s.x ? 1 : -1) : (s.vx >= 0 ? 1 : -1);
+  s.sawTime = 1.6 + lv * 0.55;
+  s.damage = Math.max(30, s.damage * (1.2 + lv * 0.15));
+  s.radius *= 1.15;
   Sfx.drill();
   return true;
 }
@@ -512,7 +515,10 @@ function hookTurtle(ctx_, owner) {
 function hookBowling(ctx_, owner) {
   if (ctx_.shell.child) return;
   const lv = owner.stats.bowling;
-  spawnCritter(ctx_, owner, { icon: '🎳', x: ctx_.x, speed: 360 + lv * 40, life: 1.8, damage: 9 + lv * 5, radius: 38, knock: 320 + lv * 70, straight: true, size: 30 });
+  const balls = owner.stats.awakened && owner.stats.awakened.includes('bowling') ? 3 : 1;
+  for (let i = 0; i < balls; i++) {
+    spawnCritter(ctx_, owner, { icon: '🎳', x: ctx_.x, delay: i * 0.28, speed: 360 + lv * 40, life: 1.8, damage: 9 + lv * 5, radius: 38, knock: 320 + lv * 70, straight: true, size: 30 });
+  }
 }
 function hookBalloon(ctx_, owner) {
   if (ctx_.shell.child) return;
@@ -852,7 +858,7 @@ const CARD_DEFS = {
   },
   sawblade: {
     icon: '🪚', name: '지형 톱날탄', short: '톱날탄', cat: '신규 대환장', color: '#cfd8dc',
-    desc: ['땅에 닿으면 지형을 깎으며 돌진하는 톱날 변신', '★중첩: 톱날 질주 시간과 절단 위력 대폭 증가'],
+    desc: ['착지하면 적을 향해 질주하는 대형 톱날 · 강타', '★중첩: 질주 거리·갈아버리는 피해 대폭 증가'],
     apply(s) { s.sawblade += 1; addHook(s, 'onImpact', hookSawblade); }
   },
   armor: {

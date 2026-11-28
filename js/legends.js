@@ -526,7 +526,98 @@ function updateReaper(f) {
   return f.t < REAP_HIT + 0.55;
 }
 
+/* ---------- 궤도 강타: 정찰 위성 격추 보상 ---------- */
+// 조준 표시 → 거대한 열기둥이 몇 초 동안 한 구역을 통째로 태움
+const STRIKE_MARK = 1.5, STRIKE_TIME = 3.4, STRIKE_TICKS = 12;
+const strikeRadius = () => 165 * Math.min(1.4, mapSpeed());
+
+function spawnOrbitalStrike(x, owner) {
+  G.fields.push({ type: 'strike', x, y: groundAt(x), owner, t: 0, R: strikeRadius(), ticks: 0, focus: true, done: {} });
+  showBanner('🛰️ 궤도 강타', `${owner.name}: 폭격 좌표 확정!`, '#ff9100', 1.5);
+  Sfx.siren();
+}
+
+function updateStrike(f, dt) {
+  if (f.t < STRIKE_MARK) {
+    for (let i = 1; i <= 4; i++) if (f.t >= STRIKE_MARK * i / 5 && once(f, 'beep' + i)) Sfx.cardMove();
+    return true;
+  }
+  if (once(f, 'ignite')) {
+    Sfx.nuke(); Sfx.lightning();
+    G.screenFlash = Math.max(G.screenFlash, 0.8);
+    G.rings.push({ x: f.x, y: groundAt(f.x), max: f.R * 2.4, t: 0, life: 0.7, color: '255,171,64' });
+  }
+  const k = (f.t - STRIKE_MARK) / STRIKE_TIME;
+  if (k < 1) {
+    G.shake = Math.max(G.shake, 20);
+    while (f.ticks < STRIKE_TICKS && k >= f.ticks / STRIKE_TICKS) {
+      f.ticks++;
+      for (const e of hostileTanks(f.owner)) {
+        if (Math.abs(e.x - f.x) > f.R + 16 * e.stats.tankScale) continue;
+        // 끝까지 맞으면 라운드 체력의 85% (한 턴 피해 제한을 무시하는 격추 보상)
+        damageTank(e, Math.max(90, e.roundMaxHp * 0.85) / STRIKE_TICKS, '#ffab40', f.owner, true);
+      }
+      for (let i = 0; i < 3; i++) {
+        const cx = f.x + rand(-f.R * 0.8, f.R * 0.8), cy = groundAt(cx);
+        Terrain.carve(cx, cy + 4, rand(22, 38));
+        igniteBarrels(cx, cy - 14, 50);
+      }
+      if (f.ticks % 3 === 1) { Sfx.explosion(70); blastFX(f.x + fxRand(-f.R * 0.6, f.R * 0.6), groundAt(f.x), 70, false); }
+    }
+    if (Math.random() < 0.9) burst(f.x + fxRand(-f.R, f.R), groundAt(f.x), 4, { colors: ['#fff3e0', '#ffab40', '#ff3d00'], speed: 520, life: 0.8, size: 4, grav: 0.35, kind: 'spark' });
+  }
+  return f.t < STRIKE_MARK + STRIKE_TIME + 0.6;
+}
+
+function drawStrike(f) {
+  const gy = groundAt(f.x), top = -2600, R = f.R;
+  ctx.save();
+  if (f.t < STRIKE_MARK) {
+    const k = f.t / STRIKE_MARK, blink = 0.65 + 0.35 * Math.sin(f.t * (14 + k * 30));
+    ctx.fillStyle = `rgba(255,145,0,${0.1 + 0.12 * k})`; ctx.fillRect(f.x - R, top, R * 2, gy - top);
+    ctx.globalAlpha = blink; ctx.strokeStyle = '#ffab40'; ctx.lineWidth = 3;
+    ctx.setLineDash([18, 12]); ctx.lineDashOffset = -f.t * 90;
+    ctx.beginPath(); ctx.moveTo(f.x - R, top); ctx.lineTo(f.x - R, gy + 30); ctx.moveTo(f.x + R, top); ctx.lineTo(f.x + R, gy + 30); ctx.stroke();
+    ctx.setLineDash([]);
+    // 납작하게 눕힌 조준 표식
+    ctx.translate(f.x, gy); ctx.scale(1, 0.32);
+    for (const [mul, spin] of [[1, 1.4], [0.68, -2.2], [0.36, 3]]) {
+      ctx.beginPath();
+      for (let i = 0; i <= 6; i++) {
+        const a = f.t * spin + i * TAU / 6, rad = R * mul * (1 + 0.5 * (1 - k) * (1 - k));
+        if (i) ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad); else ctx.moveTo(Math.cos(a) * rad, Math.sin(a) * rad);
+      }
+      ctx.lineWidth = 7; ctx.stroke();
+    }
+  } else {
+    const age = f.t - STRIKE_MARK, k = age / STRIKE_TIME;
+    const open = Math.min(1, age / 0.18), fade = k < 1 ? 1 : clamp(1 - (age - STRIKE_TIME) / 0.55, 0, 1);
+    const w = R * 2 * open * (0.25 + 0.75 * fade) * (1 + Math.sin(f.t * 47) * 0.035);
+    ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = fade;
+    for (const [mul, col] of [[1.35, 'rgba(255,61,0,0.22)'], [1, 'rgba(255,109,0,0.5)'], [0.72, 'rgba(255,171,64,0.6)'], [0.42, 'rgba(255,224,150,0.75)'], [0.17, '#ffffff']]) {
+      ctx.fillStyle = col; ctx.fillRect(f.x - w * mul / 2, top, w * mul, gy - top + 40);
+    }
+    // 기둥을 따라 쏟아지는 에너지 줄기
+    ctx.fillStyle = 'rgba(255,245,215,0.55)';
+    for (let i = 0; i < 34; i++) {
+      const sx = f.x + Math.sin(i * 91.7) * w * 0.48, len = 70 + (i % 5) * 34;
+      const sy = ((i * 173 + f.t * (1500 + (i % 7) * 190)) % (gy + 700)) - 700;
+      ctx.fillRect(sx, sy, 3 + (i % 3) * 2, Math.max(0, Math.min(len, gy - sy)));
+    }
+    // 바닥 충격 고리
+    ctx.translate(f.x, gy); ctx.scale(1, 0.3);
+    ctx.fillStyle = 'rgba(255,190,90,0.55)'; ctx.beginPath(); ctx.arc(0, 0, w * 0.72, 0, TAU); ctx.fill();
+    ctx.lineWidth = 9;
+    for (let i = 0; i < 3; i++) {
+      const p = (f.t * 1.6 + i / 3) % 1;
+      ctx.strokeStyle = `rgba(255,235,180,${1 - p})`; ctx.beginPath(); ctx.arc(0, 0, w * (0.55 + p * 0.7), 0, TAU); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 const LEGEND_FIELDS = {
+  strike: { update: updateStrike, draw: drawStrike },
   dragon: { update: updateDragon, draw: drawDragon },
   judgement: { update: updateJudgement, draw: drawJudgement },
   sweep: { update: updateSweep, draw: drawSweep },
@@ -608,6 +699,12 @@ const LEGEND_CARDS = {
 
 /* ---------- 화면 연출: 밤하늘 + 전설 발동 컷인 ---------- */
 function drawLegendDim() {
+  const strike = G.fields.find(x => x.type === 'strike');
+  if (strike) {
+    const a = Math.min(1, strike.t / 0.4) * clamp((STRIKE_MARK + STRIKE_TIME + 0.6 - strike.t) / 0.5, 0, 1);
+    ctx.fillStyle = `rgba(24,6,0,${0.5 * a})`; ctx.fillRect(0, 0, W, H);
+    return;
+  }
   const f = G.fields.find(x => x.type === 'judgement' || x.type === 'excalibur');
   if (!f || f.t <= 0) return;
   const end = f.type === 'judgement' ? JUDGE_HIT : SWORD_HIT;

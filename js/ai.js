@@ -24,7 +24,8 @@ function simulateShot(p, target, angle, power) {
   let x = m.x, y = m.y, vx = Math.cos(a) * sp, vy = -Math.sin(a) * sp;
   const tx = target.x, ty = target.y - 14 * target.stats.tankScale;
   const r = 4 * st.shellSize;
-  for (let i = 0; i < 600; i++) {
+  const steps = Math.ceil(600 * mapSpeed());
+  for (let i = 0; i < steps; i++) {
     vx += G.wind * G.windAccel * dt; vy += G.gravity * dt;
     const ox = x, oy = y;
     x += vx * dt; y += vy * dt;
@@ -91,7 +92,7 @@ function updateBot(p, dt) {
     if (!b.refined) {
       b.refined = true;
       const { angle, power } = b.best;
-      for (let da = -2.5; da <= 2.5; da += 0.5) for (let dp = -2; dp <= 2; dp += 0.5) {
+      for (let da = -2.5; da <= 2.5; da += 0.5) for (let dp = -1.5; dp <= 1.5; dp += 0.25) {
         b.jobs.push([clamp(angle + da, 0, 180), clamp(power + dp, 6, 100)]);
       }
       return;
@@ -99,8 +100,8 @@ function updateBot(p, dt) {
     // 난이도에 따른 오차 (같은 라운드에서 쏠수록 조금씩 정확해짐)
     const focus = Math.max(0.55, 1 - 0.07 * Math.floor(G.turnCount / 2));
     const noise = () => (Math.random() + Math.random() - 1) * focus;
-    b.best.angle = clamp(b.best.angle + noise() * b.level.angleErr * 1.6, 0, 180);
-    b.power = clamp(b.best.power + noise() * b.level.powerErr * 1.6, 8, 100);
+    b.best.angle = clamp(b.best.angle + noise() * b.level.angleErr * 1.6 / mapSpeed(), 0, 180);
+    b.power = clamp(b.best.power + noise() * b.level.powerErr * 1.6 / mapSpeed(), 8, 100);
     b.phase = 'aim';
     return;
   }
