@@ -1,6 +1,11 @@
 🎮 TANK ROUNDS
 
 <p align="center">
+  <a href="https://sghs10304.github.io/tankrounds/">
+    <img src="https://img.shields.io/badge/🎮_PLAY_NOW-PLAY_TANK_ROUNDS-orange?style=for-the-badge&logo=googlechrome&logoColor=white" />
+  </a>
+</p>
+<p align="center">
   <img src="https://img.shields.io/badge/GAME-TURN--BASED%20BATTLE-orange?style=for-the-badge" />
   <img src="https://img.shields.io/badge/PLATFORM-WEB-blue?style=for-the-badge" />
   <img src="https://img.shields.io/badge/MULTIPLAYER-ONLINE%20%26%20LOCAL-success?style=for-the-badge" />
@@ -181,8 +186,8 @@ git clone https://github.com/sghs10304/tankrounds.git
   <h2 align="center">🔥 READY FOR THE NEXT ROUND?</h2>
   <p align="center">Choose your cards. Build your strategy. Win the battle.</p>
   <p align="center">
-    <a href="https://github.com/sghs10304/tankrounds">
-      <b>⭐ EXPLORE TANK ROUNDS ON GITHUB</b>
+    <a href="https://sghs10304.github.io/tankrounds/">
+      <b>🎮 PLAY TANK ROUNDS NOW</b>
     </a>
   </p>
 </p>
