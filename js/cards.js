@@ -26,6 +26,7 @@ function newStats() {
     synVampire: false, synGatling: false, synTimeFreeze: false, synVoid: false,
     synFortress: false, synRam: false, synNitro: false, synTyphoon: false,
     armor: 0, repair: 0, knockback: 0, swap: 0, duck: 0, anvil: 0, banana: 0,
+    satellite: 0, dragon: 0, angel: 0, starfall: 0,
     bee: 0, turtle: 0, bowling: 0, balloon: 0, frog: 0, firework: 0, mole: 0, burger: 0, octopus: 0, gift: 0,
     hooks: { onFire: [], onUpdate: [], onApex: [], onImpact: [], onDetonate: [], onExplode: [], onTurnStart: [] },
   };
@@ -584,6 +585,51 @@ function hookGift(ctx_, owner) {
   toast(ctx_.x, ctx_.y - 100, `🎁 선물 개봉: ${CARD_DEFS[id].icon}`, '#ff8a80');
 }
 
+function hookNukeCard(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.nuke;
+  startNukeFx(ctx_.x, ctx_.y, 0.45);
+  G.poisons.push({ x: ctx_.x, y: ctx_.y, r: 100, dmg: 7 + lv * 5, turnsLeft: 3, ownerId: owner.id });
+  G.screenFlash = Math.max(G.screenFlash, 0.8);
+  G.shake = Math.max(G.shake, 30);
+  Sfx.nuke();
+}
+function hookSatellite(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.satellite;
+  for (let i = 0; i < 2 + lv; i++) {
+    const off = i === 0 ? 0 : (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 85;
+    G.fields.push({ type: 'laser', x: clamp(ctx_.x + off, 20, W - 20), owner, t: -i * 0.22, damage: 22 + lv * 5, fired: false });
+  }
+  toast(ctx_.x, ctx_.y - 90, '🛰️ 궤도 폭격 조준!', '#ff5252');
+}
+function hookDragon(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.dragon;
+  const e = enemyTank(owner, ctx_.x, ctx_.y);
+  const dir = e && e.x < ctx_.x ? -1 : 1;
+  const count = 5 + lv * 2;
+  for (let i = 0; i < count; i++) {
+    G.pending.push({
+      t: 0.35 + i * 0.11, owner,
+      custom: { x: clamp(ctx_.x + dir * (i * 52 - 80), 20, W - 20), y: 140, vx: dir * 90, vy: 380, damage: 11 + lv * 2, radius: 36, icon: '🔥' }
+    });
+  }
+  G.floaters.push({ x: ctx_.x, y: 175, text: '🐉 용의 숨결!', color: '#ff6d00', t: 0, life: 1.7 });
+  Sfx.phoenix();
+}
+function hookStarfall(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const count = 7 + owner.stats.starfall * 3;
+  for (let i = 0; i < count; i++) {
+    G.pending.push({
+      t: 0.4 + i * 0.1, owner,
+      custom: { x: clamp(ctx_.x + rand(-230, 230), 20, W - 20), y: -30, vx: rand(-70, 70), vy: 640, damage: 12, radius: 36, icon: '⭐' }
+    });
+  }
+  G.floaters.push({ x: ctx_.x, y: 175, text: '🌠 별의 심판!', color: '#fff176', t: 0, life: 1.7 });
+}
+
 const CARD_DEFS = {
   cluster: {
     icon: '🎆', name: '공중 분열탄', short: '분열', cat: '탄환 변형', color: '#f06292',
@@ -662,8 +708,8 @@ const CARD_DEFS = {
   },
   nuke: {
     icon: '☢️', name: '전술 핵탄두', short: '핵폭탄', cat: '대환장 난장판', color: '#c6ff00',
-    desc: ['폭발 반경 ×1.6배 & 공격력 ×1.2배', '★시너지(블랙홀): 초신성 붕괴 연쇄'],
-    apply(s) { s.nuke += 1; s.blastRadius *= 1.6; s.damage *= 1.2; s.shellSize *= 1.45; }
+    desc: ['폭발 ×2.1배 · 공격력 ×1.65배 · 낙진 (자폭 주의)', '★시너지(블랙홀): 초신성 붕괴 연쇄'],
+    apply(s) { s.nuke += 1; s.blastRadius *= 2.1; s.damage *= 1.65; s.shellSize *= 1.45; addHook(s, 'onExplode', hookNukeCard); }
   },
   meteor: {
     icon: '☄️', name: '유성우 폭격', short: '유성우', cat: '대환장 난장판', color: '#ff9100',
@@ -824,6 +870,26 @@ const CARD_DEFS = {
     icon: '🐙', name: '먹물 문어', short: '문어', cat: '장난 카드', color: '#ce93d8',
     desc: ['적에게 먹물! 다음 턴 이동 연료 감소', '★중첩: 발동 범위·피해 증가'],
     apply(s) { s.octopus += 1; addHook(s, 'onExplode', hookOctopus); }
+  },
+  satellite: {
+    icon: '🛰️', name: '궤도 폭격 위성', short: '위성', cat: '전설 병기', color: '#ff5252',
+    desc: ['착탄 지점에 거대 레이저 3줄기 투하', '★중첩: 레이저 수·피해 증가 (자폭 주의)'],
+    apply(s) { s.satellite += 1; addHook(s, 'onExplode', hookSatellite); }
+  },
+  dragon: {
+    icon: '🐉', name: '용의 숨결', short: '드래곤', cat: '전설 병기', color: '#ff6d00',
+    desc: ['착탄 후 적 방향으로 불의 파도가 휩쓺', '★중첩: 화염 수·피해 증가'],
+    apply(s) { s.dragon += 1; addHook(s, 'onExplode', hookDragon); }
+  },
+  angel: {
+    icon: '👼', name: '수호 천사', short: '천사', cat: '전설 수호', color: '#fff59d',
+    desc: ['부활 1회 · 피해 감소 · 매 턴 회복', '★4라운드부터 최대 체력 +20%'],
+    apply(s) { s.angel += 1; s.maxHp *= 1.2; s.phoenix += 1; s.armor += 1; s.repair += 1; addHook(s, 'onTurnStart', hookRepair); }
+  },
+  starfall: {
+    icon: '🌠', name: '별의 심판', short: '별심판', cat: '전설 병기', color: '#fff176',
+    desc: ['착탄 지점 넓게 별 10개가 쏟아짐', '★중첩: 별 +3개'],
+    apply(s) { s.starfall += 1; addHook(s, 'onExplode', hookStarfall); }
   },
   gift: {
     icon: '🎁', name: '수상한 선물상자', short: '선물', cat: '장난 카드', color: '#ff8a80',

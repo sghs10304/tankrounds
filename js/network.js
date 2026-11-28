@@ -9,7 +9,7 @@ const BROKER_URLS = [
   'wss://broker.emqx.io:8084/mqtt',
   'wss://broker.hivemq.com:8884/mqtt'
 ];
-const TOPIC_PREFIX = 'tankrounds/v7/room/';
+const TOPIC_PREFIX = 'tankrounds/v8/room/';
 
 const Net = {
   active: false,
@@ -388,6 +388,7 @@ const Net = {
         G.round = msg.round;
         G.turnCount = 0;
         G.nextFirst = msg.nextFirst;
+        applyRule(msg.rule);
         if (msg.biome) setBiome(msg.biome);
         Terrain.top.set(msg.terrainTop);
         Terrain.rebuild();
@@ -399,7 +400,7 @@ const Net = {
         beginTurn(msg.turn, msg.wind, msg.seed);
         const b = BIOME_DEFS[G.biome];
         const sub = G.round === 1 ? `⚡ 초고속 1R (체력 50) · ${b.icon} ${b.name}` : G.round === 2 ? `⚡ 스피드 2R (체력 90) · ${b.icon} ${b.name}` : G.round === 3 ? `⚡ 3R (체력 120) · ${b.icon} ${b.name}` : `${b.icon} ${b.name} · ${players[G.turn].name} 선공`;
-        showBanner(`ROUND ${G.round}`, sub, '#ffffff', 2.2);
+        showRoundBanner(sub);
         break;
       }
       case 'turnStart': {
@@ -410,7 +411,7 @@ const Net = {
           G.fields.length = 0;
         }
         if (msg.states) syncAuthoritativeState(msg.states);
-        G.turnCount = msg.turnCount - 1;
+        G.turnCount = msg.turnCount - (players[msg.turn].alive ? 1 : 0);
         beginTurn(msg.turn, msg.wind, msg.seed);
         break;
       }
@@ -456,6 +457,14 @@ const Net = {
         this.remoteTarget = null;
 
         const p = players[msg.id];
+        if (p && msg.ghost) {
+          G.pending.length = 0;
+          G.shells.length = 0;
+          G.turn = msg.id;
+          RNG.setSeed(msg.fireSeed);
+          ghostFire(p, msg.ghost.x, msg.ghost.kind, true);
+          break;
+        }
         if (p && p.alive) {
           if (G.state !== 'aiming' || G.turn !== msg.id) {
             G.pending.length = 0;
@@ -475,6 +484,7 @@ const Net = {
       }
       case 'cardChoices': {
         G.choices = msg.choices;
+        G.deal = msg.deal || null;
         G.cardQueue = msg.queue || [msg.loser];
         G.cardLoser = G.cardQueue[0];
         G.sel = 1;

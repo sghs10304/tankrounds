@@ -138,6 +138,13 @@ const Sfx = (() => {
     phoenix() { [440, 554, 659, 880, 1108].forEach((f, i) => tone({ type: 'sawtooth', f0: f, dur: 0.3, vol: 0.2, delay: i * 0.05 })); },
     lightning() { noise({ dur: 0.25, vol: 0.6, f0: 3200, f1: 300, type: 'highpass' }); tone({ type: 'sawtooth', f0: 1200, f1: 120, dur: 0.2, vol: 0.3 }); },
     ufo() { tone({ type: 'sine', f0: 440, f1: 880, dur: 0.4, vol: 0.2 }); tone({ type: 'sine', f0: 880, f1: 440, dur: 0.4, vol: 0.2, delay: 0.4 }); },
+    nuke() {
+      noise({ dur: 3.2, vol: 1.0, f0: 1800, f1: 30 });
+      tone({ type: 'sine', f0: 90, f1: 22, dur: 3.0, vol: 0.9 });
+      tone({ type: 'sawtooth', f0: 220, f1: 30, dur: 1.6, vol: 0.35, delay: 0.1 });
+    },
+    siren() { for (let i = 0; i < 4; i++) tone({ type: 'sawtooth', f0: 520, f1: 980, dur: 0.38, vol: 0.14, delay: i * 0.4 }); },
+    victory() { [523, 523, 523, 698, 880, 784, 880, 1047].forEach((f, i) => tone({ type: 'triangle', f0: f, dur: i === 7 ? 0.9 : 0.22, vol: 0.25, delay: i * 0.12 })); },
     synergy() { [587, 740, 880, 1175].forEach((f, i) => tone({ type: 'triangle', f0: f, dur: 0.3, vol: 0.22, delay: i * 0.06 })); },
     hum(dur) {
       if (!ok()) return;
