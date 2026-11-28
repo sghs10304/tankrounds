@@ -1,7 +1,8 @@
 'use strict';
 
 /* ============================ 1. 상수 및 유틸리티 ============================ */
-const W = 1600, H = 900;
+const W = 1600, H = 900; // 화면 크기
+let WW = W; // 맵(월드) 폭: 라운드와 모드에 따라 넓어짐
 const BEDROCK = 36;
 const GRAVITY = 560;
 const WIND_ACCEL = 10;
@@ -207,36 +208,42 @@ const BIOME_DEFS = {
 
 function makeBiomeDirt(biomeKey) {
   const b = BIOME_DEFS[biomeKey] || BIOME_DEFS.grass;
-  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const c = document.createElement('canvas'); c.width = WW; c.height = H;
   const x = c.getContext('2d');
   const g = x.createLinearGradient(0, 300, 0, H);
   g.addColorStop(0, b.dirt[0]); g.addColorStop(0.45, b.dirt[1]); g.addColorStop(1, b.dirt[2]);
-  x.fillStyle = g; x.fillRect(0, 0, W, H);
+  x.fillStyle = g; x.fillRect(0, 0, WW, H);
   for (let i = 0; i < 3000; i++) {
     x.fillStyle = Math.random() < 0.5 ? 'rgba(0,0,0,0.16)' : 'rgba(255,255,255,0.08)';
-    x.fillRect(fxRand(0, W), fxRand(300, H), fxRand(2, 5), fxRand(2, 5));
+    x.fillRect(fxRand(0, WW), fxRand(300, H), fxRand(2, 5), fxRand(2, 5));
   }
   return c;
 }
 
 const Terrain = {
-  top: new Float32Array(W),
-  mask: new Uint8Array(W * H),
+  top: new Float32Array(WW),
+  mask: new Uint8Array(WW * H),
   cv: document.createElement('canvas'),
   biome: 'grass',
   steel: [], // 파괴 불가 블록
   isSteel(x, y) {
     return this.steel.some(b => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h);
   },
-  applySteel(x0 = 0, x1 = W - 1) {
+  applySteel(x0 = 0, x1 = WW - 1) {
     for (const b of this.steel) {
       if (b.x > x1 || b.x + b.w < x0) continue;
-      for (let y = b.y; y < b.y + b.h && y < H; y++) this.mask.fill(1, y * W + b.x, y * W + b.x + b.w);
+      for (let y = b.y; y < b.y + b.h && y < H; y++) this.mask.fill(1, y * WW + b.x, y * WW + b.x + b.w);
       drawSteelBlock(this.c, b);
     }
   },
+  resize(w) {
+    this.top = new Float32Array(w);
+    this.mask = new Uint8Array(w * H);
+    if (this.cv) { this.cv.width = w; this.cv.height = H; }
+    this.steel = [];
+  },
   init() {
-    this.cv.width = W; this.cv.height = H;
+    this.cv.width = WW; this.cv.height = H;
     this.c = this.cv.getContext('2d');
     this.setBiome('grass');
   },
@@ -249,16 +256,16 @@ const Terrain = {
     const amps = [88, 46, 24, 11], wls = [1250, 560, 260, 105];
     const waves = amps.map((a, i) => ({ a: a * rand(0.7, 1.2), wl: wls[i] * rand(0.85, 1.2), ph: rand(0, TAU) }));
     const hill = rand(10, 115), base = H * 0.67;
-    for (let x = 0; x < W; x++) {
+    for (let x = 0; x < WW; x++) {
       let y = base;
       for (const w of waves) y += w.a * Math.sin(TAU * x / w.wl + w.ph);
-      y -= hill * Math.exp(-Math.pow((x - W / 2) / 200, 2));
+      y -= hill * Math.exp(-Math.pow((x - WW / 2) / 200, 2));
       this.top[x] = clamp(y, 330, H - BEDROCK - 90);
     }
     for (const cx of spawnXs) {
       const h0 = this.top[Math.round(cx)], half = 34, taper = 38;
       for (let dx = -half - taper; dx <= half + taper; dx++) {
-        const x = Math.round(cx) + dx; if (x < 0 || x >= W) continue;
+        const x = Math.round(cx) + dx; if (x < 0 || x >= WW) continue;
         const ad = Math.abs(dx), w = ad <= half ? 1 : 1 - (ad - half) / taper, s = w * w * (3 - 2 * w);
         this.top[x] = lerp(this.top[x], h0, s);
       }
@@ -268,69 +275,69 @@ const Terrain = {
   rebuild() {
     const b = BIOME_DEFS[this.biome] || BIOME_DEFS.grass;
     this.mask.fill(0);
-    for (let x = 0; x < W; x++) this.top[x] = Math.round(this.top[x]);
+    for (let x = 0; x < WW; x++) this.top[x] = Math.round(this.top[x]);
     for (let y = 0; y < H; y++) {
-      const row = y * W;
-      for (let x = 0; x < W; x++) if (y >= this.top[x]) this.mask[row + x] = 1;
+      const row = y * WW;
+      for (let x = 0; x < WW; x++) if (y >= this.top[x]) this.mask[row + x] = 1;
     }
     const c = this.c;
-    c.globalCompositeOperation = 'source-over'; c.clearRect(0, 0, W, H);
+    c.globalCompositeOperation = 'source-over'; c.clearRect(0, 0, WW, H);
     c.fillStyle = this.dirtPat;
     c.beginPath(); c.moveTo(0, H);
-    for (let x = 0; x < W; x++) c.lineTo(x, this.top[x]);
-    c.lineTo(W, H); c.closePath(); c.fill();
+    for (let x = 0; x < WW; x++) c.lineTo(x, this.top[x]);
+    c.lineTo(WW, H); c.closePath(); c.fill();
     c.lineJoin = 'round'; c.lineCap = 'round';
     const line = (dy, col, lw) => {
       c.beginPath(); c.moveTo(0, this.top[0] + dy);
-      for (let x = 1; x < W; x++) c.lineTo(x, this.top[x] + dy);
+      for (let x = 1; x < WW; x++) c.lineTo(x, this.top[x] + dy);
       c.strokeStyle = col; c.lineWidth = lw; c.stroke();
     };
     line(1, b.crust[0], 9); line(-0.5, b.crust[1], 5); line(-2.5, b.crust[2], 1.5);
-    c.fillStyle = '#262a38'; c.fillRect(0, H - BEDROCK, W, BEDROCK);
-    c.fillStyle = '#3a3e50'; c.fillRect(0, H - BEDROCK, W, 3);
+    c.fillStyle = '#262a38'; c.fillRect(0, H - BEDROCK, WW, BEDROCK);
+    c.fillStyle = '#3a3e50'; c.fillRect(0, H - BEDROCK, WW, 3);
     this.applySteel();
-    this.recompute(0, W - 1);
+    this.recompute(0, WW - 1);
   },
   solid(x, y) {
     x = x | 0; y = y | 0;
-    if (x < 0 || x >= W || y < 0) return false;
+    if (x < 0 || x >= WW || y < 0) return false;
     if (y >= H) return true;
-    return this.mask[y * W + x] === 1;
+    return this.mask[y * WW + x] === 1;
   },
   h(x) {
-    x = clamp(x, 1, W - 2);
+    x = clamp(x, 1, WW - 2);
     const i = x | 0;
     const h0 = (this.top[i - 1] + this.top[i] + this.top[i + 1]) / 3;
-    const h1 = (this.top[i] + this.top[i + 1] + this.top[Math.min(W - 1, i + 2)]) / 3;
+    const h1 = (this.top[i] + this.top[i + 1] + this.top[Math.min(WW - 1, i + 2)]) / 3;
     return lerp(h0, h1, x - i);
   },
   recompute(x0, x1) {
     for (let x = x0; x <= x1; x++) {
       let y = 0;
-      while (y < H && !this.mask[y * W + x]) y++;
+      while (y < H && !this.mask[y * WW + x]) y++;
       this.top[x] = y;
     }
   },
   sampleTank(x, s) {
     const hw = BASE_HW * s;
-    const xl = clamp(x - hw, 1, W - 2), xr = clamp(x + hw, 1, W - 2);
+    const xl = clamp(x - hw, 1, WW - 2), xr = clamp(x + hw, 1, WW - 2);
     const yl = this.h(xl), yr = this.h(xr);
     return { y: (yl + yr) * 0.5, tilt: Math.atan2(yr - yl, (xr - xl) || 1) };
   },
   carve(cx, cy, r) {
     const yLim = H - BEDROCK;
-    const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(W - 1, Math.ceil(cx + r));
+    const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(WW - 1, Math.ceil(cx + r));
     const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(yLim - 1, Math.ceil(cy + r));
     const r2 = r * r;
     for (let y = y0; y <= y1; y++) {
       const dy = y - cy, rd = Math.sqrt(Math.max(0, r2 - dy * dy));
       const xa = Math.max(x0, Math.ceil(cx - rd)), xb = Math.min(x1, Math.floor(cx + rd));
-      const row = y * W;
+      const row = y * WW;
       for (let x = xa; x <= xb; x++) this.mask[row + x] = 0;
     }
     const c = this.c;
     c.save();
-    c.beginPath(); c.rect(0, 0, W, yLim); c.clip();
+    c.beginPath(); c.rect(0, 0, WW, yLim); c.clip();
     c.globalCompositeOperation = 'destination-out';
     c.fillStyle = '#000';
     c.beginPath(); c.arc(cx, cy, r, 0, TAU); c.fill();
@@ -340,8 +347,8 @@ const Terrain = {
   },
   raise(cx, cy, r) {
     const yLim = H - BEDROCK;
-    const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(W - 1, Math.ceil(cx + r));
-    const base = Math.max(cy, this.top[clamp(Math.round(cx), 0, W - 1)]);
+    const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(WW - 1, Math.ceil(cx + r));
+    const base = Math.max(cy, this.top[clamp(Math.round(cx), 0, WW - 1)]);
     const c = this.c;
     for (let x = x0; x <= x1; x++) {
       const dx = x - cx; if (Math.abs(dx) > r) continue;
@@ -349,7 +356,7 @@ const Terrain = {
       const yTop = Math.max(0, Math.floor(base - h));
       const yBot = Math.min(yLim - 1, Math.ceil(Math.max(base, this.top[x])));
       if (yBot < yTop) continue;
-      for (let y = yTop; y <= yBot; y++) this.mask[y * W + x] = 1;
+      for (let y = yTop; y <= yBot; y++) this.mask[y * WW + x] = 1;
       c.globalCompositeOperation = 'source-over';
       c.drawImage(this.dirt, x, yTop, 1, yBot - yTop + 1, x, yTop, 1, yBot - yTop + 1);
       c.fillStyle = 'rgba(190,150,100,0.75)'; c.fillRect(x, yTop, 1, 2);

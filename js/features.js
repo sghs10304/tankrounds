@@ -16,11 +16,14 @@ const AWAKEN_NAMES = {
   armor: '불괴의 성벽', engine: '음속 엔진', repair: '나노 재생체', heavy: '유성 철갑탄', knockback: '천둥 주먹',
   swap: '차원 맞교환', duck: '황금 오리 군단', anvil: '신의 대장간', banana: '바나나 대폭발',
   bee: '여왕벌의 분노', turtle: '현무의 진격', bowling: '퍼펙트 스트라이크', balloon: '무중력 납치극', frog: '개구리 대홍수',
-  firework: '불꽃 대축제', mole: '지저 왕국', burger: '궁극의 만찬', octopus: '크라켄의 먹물', gift: '산타의 보따리',
-  satellite: '신의 심판 위성', dragon: '고룡의 겁화', angel: '대천사의 날개', starfall: '은하 종말'
+  firework: '불꽃 대축제',
+  penguin: '남극 대함대', chicken: '봉황의 알', cactus: '가시 지옥', snowman: '빙하 대붕괴', pinata: '디저트 대폭발',
+  excalibur: '약속된 새벽의 검', titan: '태초의 거신', train: '은하 급행', reaper: '죽음의 군주',
+  hammer: '묠니르', specter: '망령의 왕', whale: '리바이어던', mole: '지저 왕국', burger: '궁극의 만찬', octopus: '크라켄의 먹물', gift: '산타의 보따리',
+  satellite: '신의 심판 위성', dragon: '고룡 강림', angel: '대천사의 날개', starfall: '은하 종말'
 };
 // 3중첩에서 능력을 한 번 더 적용하면 지나치게 강해지는 카드는 공격력 보너스만 받음
-const NO_EXTRA_APPLY = ['glass', 'buckshot', 'burst', 'nuke', 'giant', 'angel'];
+const NO_EXTRA_APPLY = ['homing', 'glass', 'buckshot', 'burst', 'nuke', 'giant', 'angel'];
 
 function applyAwaken(s, cards) {
   const counts = {};
@@ -64,7 +67,7 @@ function awakenBlast(s) {
 }
 
 /* ---------------------------- 2. 개별 카드 리롤 (매치당 1회) ---------------------------- */
-const REROLL_Y = 712, REROLL_W = 230, REROLL_H = 40;
+const REROLL_Y = 712, REROLL_W = IS_TOUCH ? 290 : 230, REROLL_H = IS_TOUCH ? 62 : 40;
 
 function maxedCards(p) {
   const m = countCards(p);
@@ -72,7 +75,7 @@ function maxedCards(p) {
 }
 
 function canReroll() {
-  return G.state === 'cards' && players[G.cardLoser].rerolls > 0 && (!Net.active || G.cardLoser === Net.myId);
+  return G.state === 'cards' && players[G.cardLoser].rerolls > 0 && humanCanPick();
 }
 
 function rerollCard(i, remote = null) {
@@ -112,27 +115,27 @@ function drawRerollButtons() {
     ctx.fillStyle = able ? '#2a2f66' : 'rgba(40,40,60,0.7)';
     rr(cx - REROLL_W / 2, REROLL_Y, REROLL_W, REROLL_H, 20); ctx.fill();
     ctx.strokeStyle = able ? '#69f0ae' : '#555a77'; ctx.lineWidth = 2; ctx.stroke();
-    ctx.font = `900 16px ${FONT}`; ctx.fillStyle = able ? '#d7ffe9' : '#7b7f9e';
-    ctx.fillText(p.rerolls > 0 ? '🔄 이 카드만 교체' : '🔄 리롤 사용 완료', cx, REROLL_Y + 26);
+    ctx.font = `900 ${IS_TOUCH ? 25 : 16}px ${FONT}`; ctx.fillStyle = able ? '#d7ffe9' : '#7b7f9e';
+    ctx.fillText(p.rerolls > 0 ? '🔄 이 카드만 교체' : '🔄 리롤 사용 완료', cx, REROLL_Y + REROLL_H / 2 + (IS_TOUCH ? 9 : 6));
   }
 }
 
 /* ---------------------------- 3. 강철 지반 ---------------------------- */
 function placeSteel(spawnXs) {
   const blocks = [];
-  const anchors = [W * 0.5, W * 0.32, W * 0.68];
+  const anchors = WW > 2200 ? [WW * 0.5, WW * 0.34, WW * 0.66, WW * 0.2, WW * 0.8] : [WW * 0.5, WW * 0.32, WW * 0.68];
   for (const a of anchors) {
     let cx = Math.round(a + rand(-50, 50));
     // 탱크 시작 위치와 겹치지 않게 비켜 놓음
     if (spawnXs.some(x => Math.abs(x - cx) < 110)) cx += 140;
     if (spawnXs.some(x => Math.abs(x - cx) < 100)) continue;
     const w = Math.round(rand(70, 110));
-    const x = clamp(cx - (w >> 1), 20, W - 20 - w);
+    const x = clamp(cx - (w >> 1), 20, WW - 20 - w);
     const y = Math.round(Terrain.top[x + (w >> 1)]);
     // 걸어 올라갈 수 있도록 주변 지형을 완만하게 맞춤
     const taper = 60;
     for (let tx = x - taper; tx < x + w + taper; tx++) {
-      if (tx < 0 || tx >= W) continue;
+      if (tx < 0 || tx >= WW) continue;
       const d = tx < x ? x - tx : tx >= x + w ? tx - (x + w - 1) : 0;
       const k = 1 - d / taper, e = k * k * (3 - 2 * k);
       Terrain.top[tx] = lerp(Terrain.top[tx], y, e);
@@ -170,15 +173,16 @@ const BARREL_INTERVAL = 8, BARREL_DAMAGE = 18, BARREL_RADIUS = 52, BARREL_MAX = 
 
 function dropBarrels() {
   if ((G.turnCount - 1) % BARREL_INTERVAL !== 0) return;
+  const batch = Math.round(3 * mapScale());
   let made = 0;
-  for (let tries = 0; tries < 40 && made < 3 && G.barrels.length < BARREL_MAX; tries++) {
-    const x = Math.round(rand(90, W - 90));
+  for (let tries = 0; tries < 60 && made < batch && G.barrels.length < Math.round(BARREL_MAX * mapScale()); tries++) {
+    const x = Math.round(rand(90, WW - 90));
     if (players.some(p => p.alive && Math.abs(p.x - x) < 100)) continue;
     if (G.barrels.some(b => Math.abs(b.x - x) < 70)) continue;
     G.barrels.push({ x, y: 170 - made * 30, vy: 0, landed: false, fuse: 0 });
     made++;
   }
-  if (made) G.floaters.push({ x: W / 2, y: 215, text: `🛢️ 화약 드럼통 ${made}개 투하!`, color: '#ffab40', t: 0, life: 2.0 });
+  if (made) G.floaters.push({ x: camCenterX(), y: 215, text: `🛢️ 화약 드럼통 ${made}개 투하!`, color: '#ffab40', t: 0, life: 2.0 });
 }
 
 function igniteBarrels(x, y, radius, delay = 0.14) {
@@ -254,8 +258,8 @@ function satelliteActive() {
 
 // 빠른 왕복 + 속도 변화 + 위아래 흔들림 (격추 난이도 상)
 function satellitePos(t = G.satT) {
-  const span = W - 160;
-  const run = t * 540 + Math.sin(t * 2.7) * 120;
+  const span = WW - 160;
+  const run = t * 540 * mapSpeed() + Math.sin(t * 2.7) * 120;
   const m = ((run % (span * 2)) + span * 2) % (span * 2);
   return { x: 80 + (m < span ? m : span * 2 - m), y: 222 + Math.sin(t * 3.3) * 44 + Math.sin(t * 7.1) * 12 };
 }
@@ -275,7 +279,7 @@ function checkSatelliteHit(px, py, shell) {
 }
 
 function fireOrbitalLaser(x) {
-  G.fields.push({ type: 'laser', x: clamp(x, 20, W - 20), owner: G.orbital, t: 0.1, damage: 45, fired: false, big: true });
+  G.fields.push({ type: 'laser', x: clamp(x, 20, WW - 20), owner: G.orbital, t: 0.1, damage: 45, fired: false, big: true });
   G.floaters.push({ x, y: 190, text: '🛰️ 궤도 레이저 발사!', color: '#80d8ff', t: 0, life: 1.6 });
   G.orbital = null;
   Sfx.siren();
@@ -315,7 +319,7 @@ function showEmote(id, idx) {
 
 function sendEmote(idx) {
   if (!emoteReady()) return;
-  const id = Net.active ? Net.myId : G.turn; // 로컬은 현재 차례 플레이어
+  const id = Net.active ? Net.myId : aiOn() ? 0 : G.turn; // 로컬은 현재 차례 플레이어
   const p = players[id];
   if (!p || (p.chat && G.time - p.chat.at < 0.6)) return;
   showEmote(id, idx);
@@ -323,7 +327,7 @@ function sendEmote(idx) {
 }
 
 function emoteButtonAt(x, y) {
-  if (!emoteReady()) return -1;
+  if (IS_TOUCH || !emoteReady()) return -1;
   for (let i = 0; i < EMOTES.length; i++) {
     const by = EMOTE_Y + i * EMOTE_STEP;
     if (x >= EMOTE_X && x <= EMOTE_X + EMOTE_SIZE && y >= by && y <= by + EMOTE_SIZE) return i;
@@ -332,7 +336,7 @@ function emoteButtonAt(x, y) {
 }
 
 function drawEmotes() {
-  if (!emoteReady()) return;
+  if (IS_TOUCH || !emoteReady()) return;
   ctx.textAlign = 'center';
   EMOTES.forEach((e, i) => {
     const y = EMOTE_Y + i * EMOTE_STEP;
@@ -350,7 +354,7 @@ function drawChatBubbles() {
     const age = G.time - c.at, pop = Math.min(1, age / 0.18);
     const y = Math.max(165, p.y - 100 * p.stats.tankScale);
     ctx.save();
-    ctx.translate(p.x, y); ctx.scale(pop, pop);
+    ctx.translate(p.x, y); ctx.scale(pop * textBoost(), pop * textBoost());
     ctx.globalAlpha = Math.min(1, (c.until - G.time) / 0.3);
     ctx.fillStyle = '#fff'; rr(-32, -30, 64, 52, 18); ctx.fill();
     ctx.beginPath(); ctx.moveTo(-8, 20); ctx.lineTo(0, 34); ctx.lineTo(10, 20); ctx.fill();
@@ -362,24 +366,33 @@ function drawChatBubbles() {
 
 /* ---------------------------- 7. 게임형 메인 메뉴 ---------------------------- */
 const TITLE_BTNS = [
+  { mode: 'ai', icon: '🤖', title: 'AI 1 : 1 대전', color: '#ff5fa2', lines: ['혼자서도 즐기는 컴퓨터와의 결투', '난이도 3단계 (쉬움 · 보통 · 어려움)', 'AI도 카드를 고르며 강해집니다'] },
   { mode: '1v1', icon: '⚔️', title: '로컬 1 : 1 결투', color: '#4fc3f7', lines: ['한 기기에서 즐기는 클래식 듀얼', 'P1  WASD + Space', 'P2  방향키 + Enter'] },
   { mode: '2v2', icon: '🛡️', title: '로컬 2 : 2 팀전', color: '#ff8a65', lines: ['블루(P1·P3)  vs  레드(P2·P4)', 'P3  IJKL + U   ·   P4  넘패드 4856 + 0', '아군 폭발 피해 없음'] },
-  { mode: 'online', icon: '🌐', title: '온라인 멀티', color: '#69f0ae', lines: ['1:1 · 2:2 팀전 · 4인 난투', '4자리 방 코드로 친구 초대', '조작: WASD 또는 방향키 + Space/Enter'] },
+  { mode: 'online', icon: '🌐', title: '온라인 멀티', color: '#69f0ae', lines: ['1:1 · 2:2 팀전 · 4인 난투', '4자리 방 코드로 친구 초대', 'PC와 휴대폰이 함께 대전'] },
   { mode: 'codex', icon: '📖', title: '카드 도감', color: '#e040fb', lines: ['모든 카드와 등급 둘러보기', '3번 겹치면 각성 형태로 진화'] },
   { mode: 'help', icon: '❔', title: '게임 방법', color: '#ffd54f', lines: ['규칙과 새 기능 안내'] }
-].map((b, i) => Object.assign(b, { x: 96, y: 318 + i * 92, w: 500, h: 76 }));
+].map((b, i) => Object.assign(b, { x: 96, y: 302 + i * 82, w: 500, h: 72 }));
+if (IS_TOUCH) {
+  // 터치 기기는 키보드 안내 대신 터치 설명
+  TITLE_BTNS[1].lines = ['휴대폰 하나를 번갈아 잡고 대결', '자기 차례에 화면 버튼으로 조작'];
+  TITLE_BTNS[2].lines = ['블루(P1·P3)  vs  레드(P2·P4)', '차례마다 휴대폰을 넘겨 가며 플레이', '아군 폭발 피해 없음'];
+}
+const AI_BTNS = Object.keys(AI_LEVELS).map((id, i) => ({ id, x: 250 + i * 380, y: 280, w: 340, h: 360 }));
 
 const HELP_LINES = [
+  '🤖 AI 대전은 혼자서 · 휴대폰은 가로로 들고 화면 버튼으로 조작',
   `🏆 ${WINS_TO_MATCH}승을 먼저 하면 최종 우승 · 라운드가 끝나면 모두 카드 선택`,
   '🔥 직전 라운드 패배자는 카드 4장 중 선택 + 희귀 확률 상승 (승자는 3장)',
   '🔄 매치당 한 번, 원하는 카드 1장만 교체 (버튼 클릭 또는 R 키)',
   '✨ 같은 카드를 3번 모으면 각성 · 3번이 최대',
   '😈 가끔 등장하는 악마의 거래: 대가를 치르고 전설 카드 획득',
+  '🗺️ 4라운드부터 맵과 체력이 커짐 · V 키(또는 🔍)로 확대/전체 보기',
   '🛢️ 1턴부터 8턴마다 화약 드럼통 투하 · 서로 연쇄 폭발',
   '🛰️ 5~6, 11~12, 17~18턴의 정찰 위성을 격추하면 궤도 레이저 획득',
   '⬛ 강철 지반은 어떤 폭발에도 부서지지 않음',
   '🎲 2라운드마다 돌발 규칙 · 👻 4인전에서 쓰러지면 유령의 복수',
-  `☠️ ${SUDDEN_DEATH_TURN}턴이 지나면 서든데스   💬 숫자 1~4 로 이모지`
+  `☠️ ${SUDDEN_DEATH_TURN}턴 후 서든데스(후반·4인전은 더 늦게)   💬 숫자 1~4 로 이모지`
 ];
 const CODEX_COLS = 6, CODEX_ROWS = 3;
 
@@ -389,12 +402,29 @@ const codexPages = () => Math.ceil(codexList().length / (CODEX_COLS * CODEX_ROWS
 function activateMenu(mode) {
   canvas.style.cursor = 'default';
   Sfx.cardPick();
+  if (mode !== 'ai') G.ai = null;
   if (mode === 'online') Net.openModal();
-  else if (mode === 'codex' || mode === 'help') { G.menuPage = mode; G.codexPage = 0; }
+  else if (mode === 'codex' || mode === 'help' || mode === 'ai') { G.menuPage = mode; G.codexPage = 0; }
   else { Net.active = false; startMatch(mode); }
 }
 
+function startAiMatch(level) {
+  Sfx.cardPick();
+  Net.active = false;
+  G.ai = level; G.menuPage = null;
+  startMatch('1v1');
+}
+
 function menuKey(code) {
+  if (G.menuPage === 'ai') {
+    const levels = Object.keys(AI_LEVELS), num = { Digit1: 0, Digit2: 1, Digit3: 2 }[code];
+    if (code === 'Escape' || code === 'Backspace') G.menuPage = null;
+    else if (num !== undefined) startAiMatch(levels[num]);
+    else if (code === 'ArrowLeft' || code === 'KeyA') { G.aiSel = (G.aiSel + 2) % 3; Sfx.cardMove(); }
+    else if (code === 'ArrowRight' || code === 'KeyD') { G.aiSel = (G.aiSel + 1) % 3; Sfx.cardMove(); }
+    else if (code === 'Space' || code === 'Enter') startAiMatch(levels[G.aiSel]);
+    return;
+  }
   if (G.menuPage) {
     if (code === 'Escape' || code === 'Backspace') G.menuPage = null;
     else if (G.menuPage === 'codex' && (code === 'ArrowRight' || code === 'KeyD')) G.codexPage = (G.codexPage + 1) % codexPages();
@@ -403,18 +433,26 @@ function menuKey(code) {
     return;
   }
   const n = TITLE_BTNS.length;
-  const num = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4, Numpad1: 0, Numpad2: 1, Numpad3: 2 }[code];
+  const num = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4, Digit6: 5 }[code];
   if (num !== undefined) activateMenu(TITLE_BTNS[num].mode);
   else if (code === 'ArrowUp' || code === 'KeyW') { G.menuSel = (G.menuSel + n - 1) % n; Sfx.cardMove(); }
   else if (code === 'ArrowDown' || code === 'KeyS') { G.menuSel = (G.menuSel + 1) % n; Sfx.cardMove(); }
   else if (code === 'Space' || code === 'Enter') activateMenu(TITLE_BTNS[G.menuSel].mode);
 }
 
+const aiButtonAt = (x, y) => AI_BTNS.findIndex(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+
 function menuButtonAt(x, y) {
   return TITLE_BTNS.findIndex(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
 }
 
 function menuClick(x, y) {
+  if (G.menuPage === 'ai') {
+    const i = aiButtonAt(x, y);
+    if (i !== -1) startAiMatch(AI_BTNS[i].id);
+    else if (y > 740) G.menuPage = null;
+    return;
+  }
   if (G.menuPage) {
     if (G.menuPage === 'codex' && y > 770 && Math.abs(x - W / 2) > 150) {
       G.codexPage = (G.codexPage + (x > W / 2 ? 1 : codexPages() - 1)) % codexPages();
@@ -536,9 +574,81 @@ function drawCodex() {
 function drawHelp() {
   drawMenuPanel('❔ 게임 방법');
   ctx.textAlign = 'left'; ctx.font = `22px ${FONT}`; ctx.fillStyle = '#e9ebff';
-  HELP_LINES.forEach((l, i) => ctx.fillText(l, 300, 220 + i * 52));
+  HELP_LINES.forEach((l, i) => ctx.fillText(l, 300, 208 + i * 45));
   ctx.textAlign = 'center'; ctx.font = `bold 20px ${FONT}`; ctx.fillStyle = '#9aa0c8';
   ctx.fillText('여기를 누르면 닫기 (Esc)', W / 2, 815);
+}
+
+let logoLayer = null, logoShine = null;
+function getLogo() {
+  if (logoLayer) return logoLayer;
+  const [cv, x] = makeLayer(1000, 210);
+  const text = '탱크 라운즈';
+  x.textAlign = 'center'; x.lineJoin = 'round';
+  x.font = `italic 900 128px ${FONT}`;
+  // 뒤쪽 속도선
+  for (const [y, len, col] of [[62, 150, '#ff7043'], [92, 210, '#ffca28'], [122, 120, '#ff4081']]) {
+    for (const side of [-1, 1]) {
+      const sx = 500 + side * 385;
+      const g = x.createLinearGradient(sx, 0, sx + side * len * 0.75, 0);
+      g.addColorStop(0, col); g.addColorStop(1, 'rgba(255,120,60,0)');
+      x.fillStyle = g; x.beginPath(); x.moveTo(sx, y - 7); x.lineTo(sx + side * len * 0.75, y - 2); x.lineTo(sx, y + 5); x.fill();
+    }
+  }
+  // 두꺼운 외곽선 + 입체 돌출
+  x.shadowColor = 'rgba(255,110,30,0.9)'; x.shadowBlur = 34;
+  x.lineWidth = 30; x.strokeStyle = '#12071f'; x.strokeText(text, 504, 138, 760);
+  x.shadowBlur = 0;
+  for (let d = 13; d > 0; d--) {
+    x.fillStyle = d > 7 ? '#5a1200' : '#a52f00';
+    x.fillText(text, 500 + d * 0.6, 128 + d, 760);
+  }
+  x.lineWidth = 9; x.strokeStyle = '#2a0b00'; x.strokeText(text, 500, 128, 760);
+  const g = x.createLinearGradient(0, 30, 0, 140);
+  g.addColorStop(0, '#ffffff'); g.addColorStop(0.34, '#ffe97a'); g.addColorStop(0.52, '#ffb300'); g.addColorStop(0.54, '#ff7a00'); g.addColorStop(0.8, '#ffc107'); g.addColorStop(1, '#fff3b0');
+  x.fillStyle = g; x.fillText(text, 500, 128, 760);
+  x.lineWidth = 2; x.strokeStyle = 'rgba(255,255,255,0.75)'; x.strokeText(text, 500, 128, 760);
+  // 영문 부제 명판
+  x.fillStyle = '#12071f'; x.beginPath(); x.moveTo(314, 162); x.lineTo(706, 162); x.lineTo(682, 200); x.lineTo(290, 200); x.closePath(); x.fill();
+  x.strokeStyle = '#ffb300'; x.lineWidth = 3; x.stroke();
+  x.font = `italic 900 26px ${FONT}`; x.fillStyle = '#fff'; x.fillText('★  TANK  ROUNDS  ★', 498, 190, 360);
+  logoLayer = cv;
+  return cv;
+}
+
+// 로고 위로 빛줄기가 지나감 (글자 모양에만 입힘)
+function drawLogo(cx, y) {
+  const logo = getLogo();
+  ctx.drawImage(logo, cx - 500, y);
+  const t = G.time % 3.6;
+  if (t > 0.9) return;
+  if (!logoShine) logoShine = makeLayer(1000, 210);
+  const [cv, x] = logoShine;
+  x.globalCompositeOperation = 'source-over';
+  x.clearRect(0, 0, 1000, 210);
+  x.drawImage(logo, 0, 0);
+  x.globalCompositeOperation = 'source-in';
+  const sx = -100 + (t / 0.9) * 1200;
+  const g = x.createLinearGradient(sx - 60, 0, sx + 60, 40);
+  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,0.8)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 1000, 210);
+  ctx.drawImage(cv, cx - 500, y);
+}
+
+function drawAiSelect() {
+  drawMenuPanel('🤖 AI 난이도 선택');
+  ctx.textAlign = 'center';
+  AI_BTNS.forEach((b, i) => {
+    const L = AI_LEVELS[b.id], on = G.aiSel === i;
+    ctx.fillStyle = on ? 'rgba(42,48,108,0.98)' : 'rgba(255,255,255,0.06)'; rr(b.x, b.y, b.w, b.h, 22); ctx.fill();
+    ctx.strokeStyle = L.color; ctx.lineWidth = on ? 5 : 2; ctx.stroke();
+    const mid = b.x + b.w / 2;
+    ctx.font = `96px ${FONT}`; ctx.fillStyle = '#fff'; ctx.fillText(L.icon, mid, b.y + 160 + (on ? Math.sin(G.time * 5) * 6 : 0));
+    ctx.font = `900 46px ${FONT}`; ctx.fillStyle = L.color; ctx.fillText(L.name, mid, b.y + 242);
+    ctx.font = `18px ${FONT}`; ctx.fillStyle = '#dfe2ff'; ctx.fillText(L.desc, mid, b.y + 296, b.w - 30);
+  });
+  ctx.font = `bold 24px ${FONT}`; ctx.fillStyle = '#c8ccec';
+  ctx.fillText(IS_TOUCH ? '난이도를 누르면 시작  ·  여기를 누르면 뒤로' : '1·2·3 또는 ← → 후 Enter  ·  여기를 눌러 뒤로 (Esc)', W / 2, 790);
 }
 
 function drawTitle() {
@@ -551,13 +661,14 @@ function drawTitle() {
   ctx.globalAlpha = 1;
   if (G.menuPage === 'codex') { drawCodex(); return; }
   if (G.menuPage === 'help') { drawHelp(); return; }
+  if (G.menuPage === 'ai') { drawAiSelect(); return; }
 
   drawRays(W / 2, 160, 1000, 0.22);
   drawMenuBattle();
-  ctx.drawImage(getLogo(), W / 2 - 450, 62 + Math.sin(G.time * 1.8) * 7);
+  drawLogo(W / 2, 44 + Math.sin(G.time * 1.8) * 5);
   ctx.textAlign = 'center';
   ctx.font = `bold 21px ${FONT}`; ctx.fillStyle = '#ffe7c2';
-  ctx.fillText(`CARD  ARTILLERY  BATTLE  ·  ${CARD_POOL.length}종 카드  ·  ${WINS_TO_MATCH}승 선취`, W / 2, 258);
+  ctx.fillText(`CARD  ARTILLERY  BATTLE  ·  ${CARD_POOL.length}종 카드  ·  ${WINS_TO_MATCH}승 선취`, W / 2, 272);
 
   TITLE_BTNS.forEach((b, i) => {
     const on = G.menuSel === i;
@@ -568,15 +679,15 @@ function drawTitle() {
     ctx.strokeStyle = on ? b.color : 'rgba(255,255,255,0.18)'; ctx.lineWidth = on ? 3.5 : 1.5; ctx.stroke();
     ctx.fillStyle = b.color; ctx.fillRect(x + 8, b.y + 14, 7, b.h - 28);
     ctx.textAlign = 'left';
-    ctx.font = `34px ${FONT}`; ctx.fillStyle = '#fff'; ctx.fillText(b.icon, x + 36, b.y + 50);
-    ctx.font = `italic 900 28px ${FONT}`; ctx.fillStyle = on ? '#fff' : '#c9cdee'; ctx.fillText(b.title, x + 102, b.y + 48);
+    ctx.font = `34px ${FONT}`; ctx.fillStyle = '#fff'; ctx.fillText(b.icon, x + 36, b.y + 48);
+    ctx.font = `italic 900 28px ${FONT}`; ctx.fillStyle = on ? '#fff' : '#c9cdee'; ctx.fillText(b.title, x + 102, b.y + 46);
     ctx.font = `bold 15px ${FONT}`; ctx.fillStyle = b.color;
-    ctx.textAlign = 'right'; ctx.fillText(on ? `▶▶` : String(i + 1), x + b.w - 40 + (on ? Math.sin(G.time * 8) * 5 : 0), b.y + 46);
+    ctx.textAlign = 'right'; ctx.fillText(on ? `▶▶` : String(i + 1), x + b.w - 40 + (on ? Math.sin(G.time * 8) * 5 : 0), b.y + 44);
   });
 
   drawShowcase(TITLE_BTNS[G.menuSel]);
   ctx.textAlign = 'center'; ctx.font = `bold 17px ${FONT}`;
   ctx.globalAlpha = 0.6 + 0.4 * Math.sin(G.time * 3.5); ctx.fillStyle = '#fff';
-  ctx.fillText('↑↓ 선택  ·  Enter 시작  ·  마우스 클릭 가능', 346, 810);
+  ctx.fillText(IS_TOUCH ? '원하는 메뉴를 터치하세요' : '↑↓ 선택  ·  Enter 시작  ·  마우스 클릭 가능', 346, 824);
   ctx.globalAlpha = 1;
 }

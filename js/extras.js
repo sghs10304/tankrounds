@@ -7,15 +7,15 @@
 /* ---------------------------- 1. 카드 등급 ---------------------------- */
 const RARITY = {
   common: { name: '일반', color: '#b0bec5', stars: 1, weight: 46 },
-  rare: { name: '희귀', color: '#40c4ff', stars: 2, weight: 34 },
-  epic: { name: '영웅', color: '#e040fb', stars: 3, weight: 17 },
-  legend: { name: '전설', color: '#ffca28', stars: 4, weight: 3 }
+  rare: { name: '희귀', color: '#40c4ff', stars: 2, weight: 35 },
+  epic: { name: '영웅', color: '#e040fb', stars: 3, weight: 18 },
+  legend: { name: '전설', color: '#ffca28', stars: 4, weight: 1 }
 };
 const RARITY_LIST = {
-  common: ['bouncer', 'sniper', 'terraform', 'giant', 'engine', 'heavy', 'burger', 'octopus', 'bee', 'firework', 'banana', 'frost', 'mole', 'bowling'],
-  rare: ['cluster', 'poison', 'drill', 'armor', 'repair', 'knockback', 'meteor', 'mine', 'swap', 'duck', 'anvil', 'turtle', 'balloon', 'frog', 'magnet', 'sawblade', 'chainbomb', 'ufo'],
-  epic: ['airstrike', 'homing', 'burst', 'blackhole', 'glass', 'leech', 'phoenix', 'volcano', 'lightning', 'buckshot', 'twister', 'jackpot', 'wormhole', 'mirror', 'chaos', 'gift'],
-  legend: ['nuke', 'satellite', 'dragon', 'angel', 'starfall']
+  common: ['bouncer', 'sniper', 'terraform', 'giant', 'engine', 'heavy', 'burger', 'octopus', 'bee', 'firework', 'banana', 'frost', 'mole', 'bowling', 'chicken', 'cactus'],
+  rare: ['cluster', 'poison', 'drill', 'armor', 'repair', 'knockback', 'meteor', 'mine', 'swap', 'duck', 'anvil', 'turtle', 'balloon', 'frog', 'magnet', 'sawblade', 'chainbomb', 'ufo', 'penguin', 'snowman', 'pinata'],
+  epic: ['airstrike', 'homing', 'burst', 'blackhole', 'glass', 'leech', 'phoenix', 'volcano', 'lightning', 'buckshot', 'twister', 'jackpot', 'wormhole', 'mirror', 'chaos', 'gift', 'hammer', 'specter', 'train', 'reaper'],
+  legend: ['nuke', 'satellite', 'dragon', 'angel', 'starfall', 'whale', 'excalibur', 'titan']
 };
 const rarityOf = id => Object.keys(RARITY_LIST).find(k => RARITY_LIST[k].includes(id)) || 'common';
 
@@ -25,37 +25,49 @@ const DEAL_COSTS = {
   dmg: { text: '공격력 -18%', apply(s) { s.damage *= 0.82; } },
   fuel: { text: '이동 연료 -55%', apply(s) { s.maxFuel = Math.round(s.maxFuel * 0.45); } }
 };
-const DEAL_CHANCE = 0.16;
+const DEAL_CHANCE = 0.05;
+const LEGEND_PITY = 8; // 전설이 없는 선택창이 이만큼 이어지면 다음에 1장 보장
 
 // 패배자 컴백 보너스 확률 (합계 100)
-const COMEBACK_WEIGHTS = { common: 24, rare: 42, epic: 28, legend: 6 };
+const COMEBACK_WEIGHTS = { common: 25, rare: 44, epic: 29, legend: 2 };
 
-function rollCard(exclude, boost = false) {
-  let roll = RNG.next() * 100, tier = 'common';
-  for (const [k, r] of Object.entries(RARITY)) {
-    const weight = boost ? COMEBACK_WEIGHTS[k] : r.weight;
+function rollCard(exclude, boost = false, allowLegend = false) {
+  const entries = Object.keys(RARITY)
+    .filter(k => k !== 'legend' || allowLegend)
+    .map(k => [k, boost ? COMEBACK_WEIGHTS[k] : RARITY[k].weight]);
+  let roll = RNG.next() * entries.reduce((sum, e) => sum + e[1], 0), tier = 'common';
+  for (const [k, weight] of entries) {
     if (roll < weight) { tier = k; break; }
     roll -= weight;
   }
   let list = RARITY_LIST[tier].filter(id => !exclude.includes(id));
-  if (!list.length) list = CARD_POOL.filter(id => !exclude.includes(id));
+  if (!list.length) list = CARD_POOL.filter(id => !exclude.includes(id) && rarityOf(id) !== 'legend');
   return list[(RNG.next() * list.length) | 0];
 }
 
 function drawChoices(p, boost = false) {
   const choices = [], maxed = maxedCards(p);
   const count = boost ? 4 : 3;
-  while (choices.length < count) choices.push(rollCard([...choices, ...maxed], boost));
+  // 직전 선택창들에 전설이 나왔으면 잠시 쉼, 선택창 하나에는 최대 1장
+  const open = G.legendCool <= 0;
+  const hasLegend = () => choices.some(id => rarityOf(id) === 'legend');
+  while (choices.length < count) choices.push(rollCard([...choices, ...maxed], boost, open && !hasLegend()));
+  const legends = () => RARITY_LIST.legend.filter(id => !choices.includes(id) && !maxed.includes(id));
   let deal = null;
-  if (G.round >= 2 && RNG.next() < DEAL_CHANCE) {
-    const index = (RNG.next() * count) | 0;
-    const legends = RARITY_LIST.legend.filter(id => !choices.includes(id) && !maxed.includes(id));
-    if (legends.length) {
-      choices[index] = legends[(RNG.next() * legends.length) | 0];
-      const costs = Object.keys(DEAL_COSTS);
-      deal = { index, cost: costs[(RNG.next() * costs.length) | 0] };
-    }
+  if (open && !hasLegend() && G.round >= 2 && RNG.next() < DEAL_CHANCE && legends().length) {
+    const index = (RNG.next() * count) | 0, pool = legends();
+    choices[index] = pool[(RNG.next() * pool.length) | 0];
+    const costs = Object.keys(DEAL_COSTS);
+    deal = { index, cost: costs[(RNG.next() * costs.length) | 0] };
   }
+  G.pity = false;
+  if (open && !hasLegend() && p.legendDry >= LEGEND_PITY && legends().length) {
+    const pool = legends();
+    choices[(RNG.next() * count) | 0] = pool[(RNG.next() * pool.length) | 0];
+    G.pity = true;
+  }
+  if (hasLegend()) { p.legendDry = 0; G.legendCool = 2; } // 다음 선택창 2번은 전설 없음
+  else { p.legendDry++; G.legendCool = Math.max(0, G.legendCool - 1); }
   return { choices, deal };
 }
 
@@ -151,7 +163,7 @@ function landHealBox(f) {
 
 function updateGhostAim(p, ctrl, dt) {
   const dir = (ctrl.right ? 1 : 0) - (ctrl.left ? 1 : 0);
-  G.ghostX = clamp(G.ghostX + dir * 460 * dt, 20, W - 20);
+  G.ghostX = clamp(G.ghostX + dir * 460 * dt, 20, WW - 20);
   if (ctrl.up) G.ghostKind = 'bomb';
   if (ctrl.down) G.ghostKind = 'heal';
 }
@@ -212,6 +224,7 @@ function drawNukeFx() {
   const n = G.nukeFx;
   if (!n) return;
   const t = n.t, big = n.scale >= 1, out = clamp((n.dur - t) / 0.9, 0, 1);
+  const at = toScreen(n.x, n.y);
   ctx.save();
   if (big) { // 붉게 타는 하늘
     ctx.globalAlpha = 0.38 * out; ctx.fillStyle = '#ff5a00'; ctx.fillRect(0, 0, W, H);
@@ -222,14 +235,14 @@ function drawNukeFx() {
     if (rt <= 0 || rt > 1.3) continue;
     ctx.globalAlpha = 1 - rt / 1.3;
     ctx.strokeStyle = k ? '#ffb74d' : '#ffffff'; ctx.lineWidth = (28 - rt * 18) * n.scale;
-    ctx.beginPath(); ctx.arc(n.x, n.y, rt * 1500 * n.scale, 0, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.arc(at.x, at.y, rt * 1500 * n.scale, 0, TAU); ctx.stroke();
   }
   // 버섯구름
   const rise = 1 - (1 - clamp(t / 2.2, 0, 1)) ** 3;
   const sw = 600 * n.scale * (0.35 + 0.75 * rise), sh = 640 * n.scale * (0.2 + 0.9 * rise);
   ctx.globalAlpha = clamp((t - 0.12) * 4, 0, 1) * out;
-  const base = Math.min(H - 20, n.y + 45 * n.scale);
-  ctx.drawImage(getMushroom(), n.x - sw / 2, base - sh, sw, sh);
+  const base = Math.min(H - 20, at.y + 45 * n.scale);
+  ctx.drawImage(getMushroom(), at.x - sw / 2, base - sh, sw, sh);
   // 섬광
   const flash = big ? (t < 0.45 ? 1 : Math.max(0, 1 - (t - 0.45) / 1.1)) : Math.max(0, 0.55 - t * 2);
   if (flash > 0) { ctx.globalAlpha = flash; ctx.fillStyle = '#fffdf2'; ctx.fillRect(0, 0, W, H); }
@@ -252,15 +265,6 @@ function startFinisher(p) {
   if (G.slowmo > 0 || G.nukeFx || !checkRoundOver()) return;
   G.slowmo = 1.7;
   G.focus = { x: p.x, y: p.y - 20 };
-}
-
-function applyCamera() {
-  if (G.slowmo <= 0 || !G.focus) return;
-  const k = Math.min(1, (1.7 - G.slowmo) / 0.25, G.slowmo / 0.4);
-  const z = 1 + 0.75 * k;
-  const fx = clamp(G.focus.x, W / (2 * z), W - W / (2 * z)), fy = clamp(G.focus.y, H / (2 * z), H - H / (2 * z));
-  ctx.translate(W / 2, H / 2); ctx.scale(z, z);
-  ctx.translate(-lerp(W / 2, fx, k), -lerp(H / 2, fy, k));
 }
 
 function drawFinisher() {
@@ -420,9 +424,6 @@ function drawMatchOver() {
     ctx.fillText(`${p.name}  ${p.cards.slice(-14).map(id => CARD_DEFS[id].icon).join(' ')}`, W / 2, 620 + i * 48);
   });
   drawConfetti(180, t);
-  if (t > 1) {
-    ctx.globalAlpha = 0.55 + 0.45 * Math.sin(G.time * 4); ctx.font = `24px ${FONT}`; ctx.fillStyle = '#fff';
-    ctx.fillText((!Net.active || Net.isHost) ? 'Space 또는 Enter 로 새 게임' : '호스트가 새 게임을 시작하기를 기다리는 중...', W / 2, 760);
-  }
+  if (t > 1) drawMatchOverButtons();
   ctx.restore();
 }

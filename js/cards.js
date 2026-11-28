@@ -27,6 +27,8 @@ function newStats() {
     synFortress: false, synRam: false, synNitro: false, synTyphoon: false,
     armor: 0, repair: 0, knockback: 0, swap: 0, duck: 0, anvil: 0, banana: 0,
     satellite: 0, dragon: 0, angel: 0, starfall: 0,
+    excalibur: 0, titan: 0, train: 0, reaper: 0,
+    penguin: 0, chicken: 0, cactus: 0, snowman: 0, pinata: 0, hammer: 0, specter: 0, whale: 0,
     bee: 0, turtle: 0, bowling: 0, balloon: 0, frog: 0, firework: 0, mole: 0, burger: 0, octopus: 0, gift: 0,
     hooks: { onFire: [], onUpdate: [], onApex: [], onImpact: [], onDetonate: [], onExplode: [], onTurnStart: [] },
   };
@@ -88,8 +90,8 @@ const SYNERGY_DEFS = [
   },
   {
     id: 'gatling', req: ['burst', 'buckshot'], icon: '🔥', name: '지옥의 개틀링', color: '#ffd740',
-    desc: '발사 탄수 +2발 추가 & 연사 속도 초고속화!',
-    apply(s) { s.synGatling = true; s.shots += 2; s.shotDelay = 0.03; }
+    desc: '발사 탄수 +1발 추가 & 연사 속도 초고속화!',
+    apply(s) { s.synGatling = true; s.shots += 1; s.shotDelay = 0.03; }
   },
   {
     id: 'timefreeze', req: ['frost', 'sawblade'], icon: '🧊', name: '절대영도 빙하기', color: '#81d4fa',
@@ -144,8 +146,8 @@ function hookCluster(s, owner) {
   for (let i = 0; i < n; i++) {
     const f = i - (n - 1) / 2;
     const c = makeShell(owner, s.x, s.y, s.vx * 0.55 + f * (85 + lv * 15), rand(-15, 55), {
-      r: s.r * (0.72 + lv * 0.05), damage: s.damage * (0.28 + lv * 0.05), radius: s.radius * 0.68, child: true, apex: true, age: 0.3,
-      bouncesLeft: s.bouncesLeft, angle: s.angle
+      r: s.r * (0.72 + lv * 0.05), damage: s.damage * (1.4 + 0.25 * (lv - 1)) / n, radius: s.radius * 0.68, child: true, apex: true, age: 0.3,
+      bouncesLeft: s.bouncesLeft, angle: s.angle, volley: s.volley
     });
     if (owner.stats.homing) c.homeTarget = enemyTank(owner, s.x, s.y);
     G.shells.push(c);
@@ -163,7 +165,7 @@ function hookAirstrike(ctx_, owner) {
     const offset = (i - (count - 1) / 2) * (36 - Math.min(14, lv * 3)) + rand(-8, 8);
     G.pending.push({
       t: 0.32 + i * 0.07, owner,
-      custom: { x: clamp(targetX + offset, 20, W - 20), y: -30, vx: G.wind * 2, vy: 660 + lv * 30, damage: 6 + lv * 3, radius: ctx_.radius * (0.65 + lv * 0.1) }
+      custom: { x: clamp(targetX + offset, 20, WW - 20), y: -30, vx: G.wind * 2, vy: 660 + lv * 30, damage: 6 + lv * 3, radius: ctx_.radius * (0.65 + lv * 0.1) }
     });
   }
 }
@@ -175,12 +177,12 @@ function hookHomingSteer(s, dt, owner) {
   const lv = owner.stats.homing;
   const tx = t.x, ty = t.y - 14 * t.stats.tankScale;
   const dist = Math.hypot(tx - s.x, ty - s.y);
-  if (dist > 290 + lv * 70) return;
+  if (dist > 150 + lv * 35) return;
   const sp = Math.max(250, Math.hypot(s.vx, s.vy) * 0.998);
   const cur = Math.atan2(s.vy, s.vx);
   let d = Math.atan2(ty - s.y, tx - s.x) - cur;
   while (d > Math.PI) d -= TAU; while (d < -Math.PI) d += TAU;
-  const rate = 0.95 * lv;
+  const rate = (0.45 + 0.2 * lv) * (owner.stats.shots > 1 ? 0.6 : 1);
   const na = cur + clamp(d, -rate * dt, rate * dt);
   s.vx = Math.cos(na) * sp; s.vy = Math.sin(na) * sp;
 }
@@ -231,7 +233,7 @@ function hookVolcano(ctx_, owner) {
     for (let k = 0; k < 2; k++) {
       G.pending.push({
         t: 0.2 + k * 0.15, owner,
-        custom: { x: clamp(ctx_.x + rand(-180, 180), 40, W - 40), y: -40, vx: rand(-80, 80), vy: 700, damage: 12, radius: ctx_.radius * 0.85 }
+        custom: { x: clamp(ctx_.x + rand(-180, 180), 40, WW - 40), y: -40, vx: rand(-80, 80), vy: 700, damage: 12, radius: ctx_.radius * 0.85 }
       });
     }
   }
@@ -242,7 +244,7 @@ function hookMeteor(ctx_, owner) {
   const count = 3 + lv * 2;
   Sfx.airstrike();
   for (let i = 0; i < count; i++) {
-    const mx = rand(120, W - 120);
+    const mx = rand(120, WW - 120);
     G.pending.push({
       t: 0.22 + i * 0.1, owner,
       custom: { x: mx, y: -40, vx: rand(-150, 150), vy: 690, damage: 10 + lv * 3, radius: ctx_.radius * (0.75 + lv * 0.1) }
@@ -254,7 +256,7 @@ function hookMine(ctx_, owner) {
   const lv = owner.stats.mine;
   const count = 2 + lv * 2;
   for (let i = 0; i < count; i++) {
-    const mx = clamp(ctx_.x + (i - (count - 1) / 2) * 44 + rand(-8, 8), 30, W - 30);
+    const mx = clamp(ctx_.x + (i - (count - 1) / 2) * 44 + rand(-8, 8), 30, WW - 30);
     G.mines.push({ x: mx, y: Terrain.h(mx) - 4, ownerId: owner.id, damage: 15 + lv * 4, radius: ctx_.radius * 0.75, life: 2 + lv });
   }
 }
@@ -289,7 +291,7 @@ function hookChainBomb(ctx_, owner) {
   for (let i = 1; i <= 1 + lv; i++) {
     G.pending.push({
       t: i * 0.16, owner,
-      chainBoom: { x: clamp(ctx_.x + dir * i * 62, 20, W - 20), damage: 12 + lv * 4, radius: ctx_.radius * (0.75 + lv * 0.1) }
+      chainBoom: { x: clamp(ctx_.x + dir * i * 62, 20, WW - 20), damage: 12 + lv * 4, radius: ctx_.radius * (0.75 + lv * 0.1) }
     });
   }
 }
@@ -338,7 +340,7 @@ function hookWormhole(s, owner) {
   if (!e || Math.abs(e.x - s.x) > Math.min(420, 220 + lv * 40)) return;
   s.wormholed = true;
   const miss = Math.max(70, 130 - lv * 15);
-  const targetX = clamp(e.x + rand(-miss, miss), 50, W - 50);
+  const targetX = clamp(e.x + rand(-miss, miss), 50, WW - 50);
   G.rings.push({ x: s.x, y: s.y, max: 55, t: 0, life: 0.35, color: '0,229,255' });
   s.x = targetX;
   s.y = Math.min(s.y, 140);
@@ -372,7 +374,7 @@ function hookMirror(s, owner) {
     const spd = Math.hypot(s.vx, s.vy);
     const baseAng = Math.atan2(s.vy, s.vx) + spreadAng;
     const clone = makeShell(owner, s.x, s.y, Math.cos(baseAng) * spd, Math.sin(baseAng) * spd, {
-      r: s.r * 0.85, damage: 14 + lv * 3, radius: s.radius * 0.8, child: true, age: 0.1, bouncesLeft: s.bouncesLeft
+      r: s.r * 0.85, damage: 14 + lv * 3, radius: s.radius * 0.8, child: true, age: 0.1, bouncesLeft: s.bouncesLeft, volley: s.volley
     });
     G.shells.push(clone);
   }
@@ -466,7 +468,7 @@ function hookAnvil(ctx_, owner) {
   for (let i = 0; i < lv; i++) {
     G.pending.push({
       t: 0.55 + i * 0.25, owner,
-      custom: { x: clamp(ctx_.x + i * (i % 2 ? 30 : -30), 20, W - 20), y: -40, vx: -G.wind * 1.5, vy: 560, damage: 24, radius: 34, icon: '⚒️' }
+      custom: { x: clamp(ctx_.x + i * (i % 2 ? 30 : -30), 20, WW - 20), y: -40, vx: -G.wind * 1.5, vy: 560, damage: 24, radius: 34, icon: '⚒️' }
     });
   }
 }
@@ -482,7 +484,7 @@ function hookBanana(ctx_, owner) {
 }
 
 function spawnCritter(ctx_, owner, o) {
-  const x = clamp(o.x, 12, W - 12);
+  const x = clamp(o.x, 12, WW - 12);
   const e = enemyTank(owner, x, ctx_.y);
   G.fields.push(Object.assign({ type: 'critter', y: ctx_.y, owner, t: -(o.delay || 0), dir: e && e.x < x ? -1 : 1 }, o, { x }));
 }
@@ -526,7 +528,7 @@ function hookFrog(ctx_, owner) {
   for (let i = 0; i < count; i++) {
     G.pending.push({
       t: 0.3 + i * 0.12, owner,
-      custom: { x: clamp(ctx_.x + rand(-130, 130), 20, W - 20), y: -30, vx: rand(-40, 40), vy: 430, damage: 7, radius: 28, icon: '🐸', hops: 1 }
+      custom: { x: clamp(ctx_.x + rand(-130, 130), 20, WW - 20), y: -30, vx: rand(-40, 40), vy: 430, damage: 7, radius: 28, icon: '🐸', hops: 1 }
     });
   }
   toast(ctx_.x, ctx_.y - 55, '🐸 개구리 비!', '#9ccc65');
@@ -587,6 +589,7 @@ function hookGift(ctx_, owner) {
 
 function hookNukeCard(ctx_, owner) {
   if (ctx_.shell.child) return;
+  legendCutin(owner, 'nuke');
   const lv = owner.stats.nuke;
   startNukeFx(ctx_.x, ctx_.y, 0.45);
   G.poisons.push({ x: ctx_.x, y: ctx_.y, r: 100, dmg: 7 + lv * 5, turnsLeft: 3, ownerId: owner.id });
@@ -594,43 +597,114 @@ function hookNukeCard(ctx_, owner) {
   G.shake = Math.max(G.shake, 30);
   Sfx.nuke();
 }
-function hookSatellite(ctx_, owner) {
-  if (ctx_.shell.child) return;
-  const lv = owner.stats.satellite;
-  for (let i = 0; i < 2 + lv; i++) {
-    const off = i === 0 ? 0 : (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 85;
-    G.fields.push({ type: 'laser', x: clamp(ctx_.x + off, 20, W - 20), owner, t: -i * 0.22, damage: 22 + lv * 5, fired: false });
-  }
-  toast(ctx_.x, ctx_.y - 90, '🛰️ 궤도 폭격 조준!', '#ff5252');
-}
-function hookDragon(ctx_, owner) {
-  if (ctx_.shell.child) return;
-  const lv = owner.stats.dragon;
-  const e = enemyTank(owner, ctx_.x, ctx_.y);
-  const dir = e && e.x < ctx_.x ? -1 : 1;
-  const count = 5 + lv * 2;
-  for (let i = 0; i < count; i++) {
-    G.pending.push({
-      t: 0.35 + i * 0.11, owner,
-      custom: { x: clamp(ctx_.x + dir * (i * 52 - 80), 20, W - 20), y: 140, vx: dir * 90, vy: 380, damage: 11 + lv * 2, radius: 36, icon: '🔥' }
-    });
-  }
-  G.floaters.push({ x: ctx_.x, y: 175, text: '🐉 용의 숨결!', color: '#ff6d00', t: 0, life: 1.7 });
-  Sfx.phoenix();
-}
-function hookStarfall(ctx_, owner) {
-  if (ctx_.shell.child) return;
-  const count = 7 + owner.stats.starfall * 3;
-  for (let i = 0; i < count; i++) {
-    G.pending.push({
-      t: 0.4 + i * 0.1, owner,
-      custom: { x: clamp(ctx_.x + rand(-230, 230), 20, W - 20), y: -30, vx: rand(-70, 70), vy: 640, damage: 12, radius: 36, icon: '⭐' }
-    });
-  }
-  G.floaters.push({ x: ctx_.x, y: 175, text: '🌠 별의 심판!', color: '#fff176', t: 0, life: 1.7 });
-}
 
+function hookPenguin(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.penguin;
+  for (const dir of [-1, 1]) {
+    spawnCritter(ctx_, owner, { icon: '🐧', x: ctx_.x + dir * 12, dir, speed: 290 + lv * 30, life: 1.4, damage: 10 + lv * 5, radius: 36, knock: 220 + lv * 40, straight: true, size: 30 });
+  }
+  toast(ctx_.x, ctx_.y - 60, '🐧 펭귄 썰매 출발!', '#81d4fa');
+}
+function hookChicken(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.chicken;
+  const dir = ctx_.shell.vx >= 0 ? 1 : -1;
+  for (let i = 0; i < 3 + lv; i++) {
+    G.pending.push({
+      t: 0.35 + i * 0.16, owner,
+      custom: { x: clamp(ctx_.x + dir * (i - 1) * 48, 20, WW - 20), y: Math.max(140, ctx_.y - 230), vx: dir * 30, vy: 90, damage: 6 + lv, radius: 28, icon: '🥚' }
+    });
+  }
+  toast(ctx_.x, Math.max(170, ctx_.y - 250), '🐔 꼬꼬댁! 달걀 폭격', '#fff59d');
+}
+function hookCactus(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.cactus, count = 5 + lv * 2;
+  for (let i = 0; i < count; i++) {
+    const a = -Math.PI * (0.08 + 0.84 * i / (count - 1));
+    G.shells.push(makeShell(owner, ctx_.x, ctx_.y - 14, Math.cos(a) * 300, Math.sin(a) * 300, {
+      r: 5, damage: 5 + lv, radius: 24, child: true, apex: true, age: 0.3, icon: '🌵'
+    }));
+  }
+  Sfx.pop();
+}
+function hookSnowman(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.snowman;
+  spawnCritter(ctx_, owner, { icon: '☃️', x: ctx_.x, speed: 150, life: 2.8, damage: 13 + lv * 7, radius: 52 + lv * 4, knock: 180 + lv * 40, straight: true, size: 46 });
+  toast(ctx_.x, ctx_.y - 80, '☃️ 눈덩이가 굴러간다!', '#e1f5fe');
+}
+function hookPinata(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const count = 3 + owner.stats.pinata;
+  const candy = ['🍬', '🍭', '🍫'];
+  for (let i = 0; i < count; i++) {
+    G.shells.push(makeShell(owner, ctx_.x, ctx_.y - 16, rand(-260, 260), rand(-460, -300), {
+      r: 6, damage: 6, radius: 26, child: true, apex: true, age: 0.3, hops: 2, icon: candy[i % 3]
+    }));
+  }
+  Sfx.pop();
+  toast(ctx_.x, ctx_.y - 60, '🪅 사탕 파티!', '#ff80ab');
+}
+function hookHammer(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.hammer;
+  const e = nearEnemy(ctx_, owner, 120 + lv * 30);
+  if (!e) return;
+  G.pending.push({
+    t: 0.45, owner,
+    custom: { x: e.x, y: Math.max(120, e.y - 220), vx: -G.wind * 1.5, vy: 520, damage: 16 + lv * 8, radius: 42, icon: '🔨', size: 54, r: 10 }
+  });
+  toast(e.x, e.y - 90, '🔨 뿅!', '#ffab40');
+}
+function hookSpecter(ctx_, owner) {
+  if (ctx_.shell.child) return;
+  const lv = owner.stats.specter;
+  spawnCritter(ctx_, owner, { icon: '👻', x: ctx_.x, speed: 120 + lv * 20, life: 4.5, damage: 14 + lv * 6, radius: 40, fly: true, size: 34 });
+  toast(ctx_.x, ctx_.y - 70, '👻 끝까지 쫓아간다...', '#b39ddb');
+}
 const CARD_DEFS = {
+  penguin: {
+    icon: '🐧', name: '펭귄 썰매단', short: '펭귄', cat: '장난 카드', color: '#81d4fa',
+    desc: ['착탄 지점에서 펭귄이 양쪽으로 돌진', '★중첩: 속도·피해·밀치기 증가'],
+    apply(s) { s.penguin += 1; addHook(s, 'onExplode', hookPenguin); }
+  },
+  chicken: {
+    icon: '🐔', name: '폭탄 암탉', short: '암탉', cat: '장난 카드', color: '#fff176',
+    desc: ['암탉이 날아가며 폭탄 달걀 4개 투하', '★중첩: 달걀 수·피해 증가'],
+    apply(s) { s.chicken += 1; addHook(s, 'onExplode', hookChicken); }
+  },
+  cactus: {
+    icon: '🌵', name: '선인장 폭발', short: '선인장', cat: '탄환 변형', color: '#8bc34a',
+    desc: ['착탄 시 가시 7발이 사방으로 발사', '★중첩: 가시 +2발 (자폭 주의)'],
+    apply(s) { s.cactus += 1; addHook(s, 'onExplode', hookCactus); }
+  },
+  snowman: {
+    icon: '☃️', name: '눈덩이 대작전', short: '눈덩이', cat: '장난 카드', color: '#b3e5fc',
+    desc: ['거대한 눈덩이가 적 쪽으로 굴러감', '★중첩: 피해·폭발 크기 증가'],
+    apply(s) { s.snowman += 1; addHook(s, 'onExplode', hookSnowman); }
+  },
+  pinata: {
+    icon: '🪅', name: '피냐타 폭탄', short: '피냐타', cat: '대환장 난장판', color: '#ff80ab',
+    desc: ['통통 튀는 사탕 폭탄 4개가 쏟아짐', '★중첩: 사탕 +1개'],
+    apply(s) { s.pinata += 1; addHook(s, 'onExplode', hookPinata); }
+  },
+  hammer: {
+    icon: '🔨', name: '천벌의 뿅망치', short: '뿅망치', cat: '지원 포격', color: '#ffab40',
+    desc: ['적 근처 착탄 시 머리 위로 망치 낙하', '★중첩: 발동 범위·피해 증가'],
+    apply(s) { s.hammer += 1; addHook(s, 'onExplode', hookHammer); }
+  },
+  specter: {
+    icon: '👻', name: '꼬마 유령', short: '유령', cat: 'ROUNDS 엽기', color: '#b39ddb',
+    desc: ['유령이 지형을 통과해 적을 추격 후 폭발', '★중첩: 속도·피해 증가'],
+    apply(s) { s.specter += 1; addHook(s, 'onExplode', hookSpecter); }
+  },
+  whale: {
+    icon: '🐋', name: '하늘 고래', short: '고래', cat: '전설 병기', color: '#40c4ff',
+    desc: ['거대 고래 추락 후 해일이 적을 날려버림', '★중첩: 피해·범위 증가 (자폭 주의)'],
+    apply(s) { s.whale += 1; addHook(s, 'onExplode', hookWhale); }
+  },
   cluster: {
     icon: '🎆', name: '공중 분열탄', short: '분열', cat: '탄환 변형', color: '#f06292',
     desc: ['최고점에서 부채꼴 자탄 4발 분열', '★중첩: 자탄 수(+2발) 및 위력 폭증'],
@@ -643,8 +717,8 @@ const CARD_DEFS = {
   },
   homing: {
     icon: '🎯', name: '유도탄', short: '유도', cat: '탄환 변형', color: '#26c6da',
-    desc: ['상대 반경 360px 진입 시 자동 유도', '★중첩: 유도 탐지 거리·선회력 급상승'],
-    apply(s) { s.homing += 1; addHook(s, 'onApex', hookHomingLock); addHook(s, 'onUpdate', hookHomingSteer); }
+    desc: ['적 가까이에서 살짝 휘어짐 · 공격력 -10%', '★중첩: 유도 거리·선회력 소폭 증가'],
+    apply(s) { s.homing += 1; s.damage *= 0.9; addHook(s, 'onApex', hookHomingLock); addHook(s, 'onUpdate', hookHomingSteer); }
   },
   poison: {
     icon: '☣️', name: '맹독탄', short: '맹독', cat: '지형 제어', color: '#76ff03',
@@ -658,8 +732,8 @@ const CARD_DEFS = {
   },
   burst: {
     icon: '🔫', name: '3연발 사격', short: '3연발', cat: '화력 강화', color: '#ffca28',
-    desc: ['0.13초 간격 3발 연속 발사 (52% 피해)', '★시너지(산탄): 지옥의 개틀링 기관포'],
-    apply(s) { s.shots += 2; s.damage *= 0.52; }
+    desc: ['3발 연속 발사 (46% 피해) · 능력은 1회', '★시너지(산탄): 지옥의 개틀링 기관포'],
+    apply(s) { s.shots += 2; s.damage *= 0.46; }
   },
   drill: {
     icon: '🔩', name: '드릴 관통탄', short: '드릴', cat: '탄환 변형', color: '#b0bec5',
@@ -728,8 +802,8 @@ const CARD_DEFS = {
   },
   buckshot: {
     icon: '💥', name: '샷건 산탄포', short: '산탄포', cat: '대환장 난장판', color: '#ffd740',
-    desc: ['부채꼴로 산탄 6발을 동시에 발사', '★시너지(3연발): 지옥의 개틀링 난사'],
-    apply(s) { s.buckshot += 1; s.shots += 5; s.shotDelay = 0.02; s.damage *= 0.28; }
+    desc: ['산탄 6발 동시 발사 · 카드 능력은 1회', '★시너지(3연발): 지옥의 개틀링 난사'],
+    apply(s) { s.buckshot += 1; s.shots += 5; s.shotDelay = 0.02; s.damage *= 0.23; }
   },
   ufo: {
     icon: '🛸', name: 'UFO 납치 광선', short: 'UFO', cat: '대환장 난장판', color: '#ea80fc',
@@ -873,12 +947,12 @@ const CARD_DEFS = {
   },
   satellite: {
     icon: '🛰️', name: '궤도 폭격 위성', short: '위성', cat: '전설 병기', color: '#ff5252',
-    desc: ['착탄 지점에 거대 레이저 3줄기 투하', '★중첩: 레이저 수·피해 증가 (자폭 주의)'],
+    desc: ['거대 광선 한 줄기가 지면을 가르며 휩씀', '★중첩: 휩쓰는 폭·피해 증가'],
     apply(s) { s.satellite += 1; addHook(s, 'onExplode', hookSatellite); }
   },
   dragon: {
-    icon: '🐉', name: '용의 숨결', short: '드래곤', cat: '전설 병기', color: '#ff6d00',
-    desc: ['착탄 후 적 방향으로 불의 파도가 휩쓺', '★중첩: 화염 수·피해 증가'],
+    icon: '🐉', name: '용의 강림', short: '드래곤', cat: '전설 병기', color: '#ff6d00',
+    desc: ['용이 하늘에서 내리꽂혀 불바다를 만듦', '★중첩: 강하 피해·화염 범위 증가'],
     apply(s) { s.dragon += 1; addHook(s, 'onExplode', hookDragon); }
   },
   angel: {
@@ -888,7 +962,7 @@ const CARD_DEFS = {
   },
   starfall: {
     icon: '🌠', name: '별의 심판', short: '별심판', cat: '전설 병기', color: '#fff176',
-    desc: ['착탄 지점 넓게 별 10개가 쏟아짐', '★중첩: 별 +3개'],
+    desc: ['별자리를 그린 뒤 심판의 빛 5줄기 강림', '★중첩: 심판 피해 증가'],
     apply(s) { s.starfall += 1; addHook(s, 'onExplode', hookStarfall); }
   },
   gift: {

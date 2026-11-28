@@ -9,7 +9,7 @@ const BROKER_URLS = [
   'wss://broker.emqx.io:8084/mqtt',
   'wss://broker.hivemq.com:8884/mqtt'
 ];
-const TOPIC_PREFIX = 'tankrounds/v9/room/';
+const TOPIC_PREFIX = 'tankrounds/v10/room/';
 
 const Net = {
   active: false,
@@ -389,6 +389,7 @@ const Net = {
         G.turnCount = 0;
         G.nextFirst = msg.nextFirst;
         applyRule(msg.rule);
+        setWorld(worldWidthFor(G.mode, G.round));
         if (msg.biome) setBiome(msg.biome);
         Terrain.steel = msg.steel || [];
         Terrain.top.set(msg.terrainTop);
@@ -399,6 +400,7 @@ const Net = {
         G.portals = msg.portals;
         Sfx.roundStart();
         beginTurn(msg.turn, msg.wind, msg.seed);
+        updateCamera(0, true);
         const b = BIOME_DEFS[G.biome];
         const sub = G.round === 1 ? `⚡ 초고속 1R (체력 50) · ${b.icon} ${b.name}` : G.round === 2 ? `⚡ 스피드 2R (체력 90) · ${b.icon} ${b.name}` : G.round === 3 ? `⚡ 3R (체력 120) · ${b.icon} ${b.name}` : `${b.icon} ${b.name} · ${players[G.turn].name} 선공`;
         showRoundBanner(sub);
@@ -489,7 +491,9 @@ const Net = {
         G.choices = msg.choices;
         G.deal = msg.deal || null;
         G.comeback = !!msg.comeback;
+        G.pity = !!msg.pity;
         G.rerollFx = null;
+        G.touchArmed = -1;
         G.cardQueue = msg.queue || [msg.loser];
         G.cardLoser = G.cardQueue[0];
         G.sel = 1;
